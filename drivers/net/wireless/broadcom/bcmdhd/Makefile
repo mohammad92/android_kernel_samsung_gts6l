@@ -317,6 +317,8 @@ ifeq ($(BUS_IFACE_PCIE),y)
 DHDCFLAGS += -DDHD_4WAYM4_FAIL_DISCONNECT
 endif
 
+PLATFORM_VERSION=10.0.0
+
 # Android Version Check from Platform source
 ifneq ($(ANDROID_VERSION),)
 MAJOR_VERSION := $(shell echo $(ANDROID_VERSION) | rev | cut -c 5- | rev)
