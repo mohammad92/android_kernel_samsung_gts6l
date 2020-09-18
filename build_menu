@@ -13,7 +13,7 @@ export ANDROID_MAJOR_VERSION=r
 BUILD_CROSS_COMPILE=$PARENT_DIR/aarch64-linux-android-4.9/bin/aarch64-linux-android-
 KERNEL_LLVM_BIN=$PARENT_DIR/llvm-arm-toolchain-ship-10.0/bin/clang
 CLANG_TRIPLE=aarch64-linux-gnu-
-KERNEL_MAKE_ENV=""
+KERNEL_MAKE_ENV="LOCALVERSION=-afaneh92"
 
 DTS_DIR=$(pwd)/out/arch/$ARCH/boot/dts
 
