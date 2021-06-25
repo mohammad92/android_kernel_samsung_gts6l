@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,6 +11,7 @@
  */
 
 #include "sdxprairie-v2.dtsi"
+#include "sdxprairie-cpe-memory-map.dtsi"
 #include "sdxprairie-mtp.dtsi"
 
 &qnand_1 {
@@ -21,37 +22,20 @@
 	qcom,force-warm-reboot;
 };
 
-/* delete pm8150b nodes */
+&sdx_ext_ipc {
+	status = "ok";
+};
+
+&i2c_3 {
+	tavil_codec {
+		status = "disabled";
+	};
+};
+
 &soc {
-	/delete-node/ thermal-zones;
-};
-
-&usb {
-	extcon = <&vbus_detect>;
-	qcom,smmu-s1-bypass;
-};
-
-&spmi_bus {
-	/delete-node/ qpnp,fg;
-	/delete-node/ bcl@1d00;
-	/delete-node/ qcom,usb-pdphy@1700;
-	/delete-node/ qcom,qpnp-smb5;
-	/delete-node/ adc_tm@3500;
-	/delete-node/ vadc@3100;
-	/delete-node/ qcom,pm8150b@2;
-	/delete-node/ qcom,pm8150b@3;
-};
-
-&qnand_1 {
-	status = "ok";
-};
-
-&blsp1_uart2b_hs {
-	status = "ok";
-};
-
-&vbus_detect {
-	status = "ok";
+	sound-tavil {
+		status = "disabled";
+	};
 };
 
 &cnss_qca6390 {

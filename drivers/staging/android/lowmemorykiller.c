@@ -71,8 +71,6 @@ static int enable_lmk = 1;
 module_param_named(enable_lmk, enable_lmk, int, 0644);
 
 static uint32_t lmk_count;
-static int lmkd_count;
-static int lmkd_cricount;
 
 static u32 lowmem_debug_level = 1;
 static short lowmem_adj[6] = {
@@ -924,5 +922,3 @@ module_param_array_named(minfree, lowmem_minfree, uint, &lowmem_minfree_size,
 module_param_named(debug_level, lowmem_debug_level, uint, S_IRUGO | S_IWUSR);
 module_param_named(lmk_fast_run, lmk_fast_run, int, S_IRUGO | S_IWUSR);
 module_param_named(lmkcount, lmk_count, uint, 0444);
-module_param_named(lmkd_count, lmkd_count, int, 0644);
-module_param_named(lmkd_cricount, lmkd_cricount, int, 0644);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,7 +35,6 @@ struct shd_stage_range {
 };
 
 struct shd_display_base {
-	struct mutex           base_mutex;
 	struct drm_display_mode mode;
 	struct drm_crtc       *crtc;
 	struct drm_encoder    *encoder;
@@ -48,8 +47,6 @@ struct shd_display_base {
 	int intf_idx;
 	int connector_type;
 	bool mst_port;
-	bool enabled;
-	bool enable_changed;
 };
 
 struct shd_display {
@@ -67,11 +64,8 @@ struct shd_display {
 	struct shd_stage_range stage_range;
 
 	struct platform_device *pdev;
-	struct completion vsync_comp;
 	struct list_head head;
-
-	bool enabled;
-	bool enable_changed;
+	struct drm_crtc *crtc;
 };
 
 /* drm internal header */
@@ -82,5 +76,9 @@ void drm_minor_release(struct drm_minor *minor);
 void *sde_encoder_phys_shd_init(enum sde_intf_type type,
 			u32 controller_id, void *phys_init_params);
 
+/* helper for seamless plane handoff */
+u32 shd_get_shared_crtc_mask(struct drm_crtc *crtc);
+void shd_skip_shared_plane_update(struct drm_plane *plane,
+			struct drm_crtc *crtc);
 
 #endif /* _SHD_DRM_H_ */

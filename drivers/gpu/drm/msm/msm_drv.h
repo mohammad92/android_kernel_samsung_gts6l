@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -199,7 +199,7 @@ enum msm_mdp_conn_property {
 	CONNECTOR_PROP_LP,
 	CONNECTOR_PROP_FB_TRANSLATION_MODE,
 	CONNECTOR_PROP_QSYNC_MODE,
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	/* SAMSUNG_FINGERPRINT */
 	CONNECTOR_PROP_FINGERPRINT_MASK,
 #endif
@@ -250,6 +250,18 @@ enum msm_display_caps {
 	MSM_DISPLAY_ESD_ENABLED		= BIT(4),
 	MSM_DISPLAY_CAP_MST_MODE	= BIT(5),
 	MSM_DISPLAY_SPLIT_LINK		= BIT(6),
+};
+
+/**
+ * enum panel_mode - panel operation mode
+ * @MSM_DISPLAY_VIDEO_MODE: video mode panel
+ * @MSM_DISPLAY_CMD_MODE:   Command mode panel
+ * @MODE_MAX:
+ */
+enum panel_op_mode {
+	MSM_DISPLAY_VIDEO_MODE = 0,
+	MSM_DISPLAY_CMD_MODE,
+	MSM_DISPLAY_MODE_MAX,
 };
 
 /**
@@ -404,6 +416,9 @@ struct msm_display_dsc_info {
 	char *range_bpg_offset;
 
 	u32 extra_width;
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+	u32 pps_delay_ms;
+#endif
 };
 
 /**
@@ -453,6 +468,9 @@ struct msm_display_topology {
  */
 struct msm_mode_info {
 	uint32_t frame_rate;
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+	uint32_t frame_rate_org;
+#endif
 	uint32_t vtotal;
 	uint32_t prefill_lines;
 	uint32_t jitter_numer;
@@ -492,6 +510,7 @@ struct msm_mode_info {
 struct msm_display_info {
 	int intf_type;
 	uint32_t capabilities;
+	enum panel_op_mode curr_panel_mode;
 
 	uint32_t num_of_h_tiles;
 	uint32_t h_tile_instance[MAX_H_TILES_PER_DISPLAY];
@@ -863,7 +882,7 @@ struct drm_framebuffer * msm_alloc_stolen_fb(struct drm_device *dev,
 struct drm_fb_helper *msm_fbdev_init(struct drm_device *dev);
 void msm_fbdev_free(struct drm_device *dev);
 
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 int __msm_drm_notifier_call_chain(unsigned long event, void *data);
 #endif
 struct hdmi;

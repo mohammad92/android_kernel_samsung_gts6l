@@ -1061,7 +1061,7 @@ static ssize_t grip_2ch_threshold_show(struct device *dev,
 	}
 	data->grip_n_thd_2ch = (r_buf[0] << 8) | r_buf[1];
 
-	return sprintf(buf, "%u,%u,%u\n", data->grip_p_thd, data->grip_r_thd, data->grip_n_thd);
+	return sprintf(buf, "%u,%u,%u\n", data->grip_p_thd_2ch, data->grip_r_thd_2ch, data->grip_n_thd_2ch);
 }
 
 static ssize_t grip_2ch_total_cap_show(struct device *dev,

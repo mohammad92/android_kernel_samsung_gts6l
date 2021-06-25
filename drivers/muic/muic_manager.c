@@ -169,6 +169,7 @@ static bool muic_manager_is_supported_dev(int attached_dev)
 	case ATTACHED_DEV_OTG_MUIC:
 	case ATTACHED_DEV_AFC_CHARGER_5V_MUIC:
 	case ATTACHED_DEV_AFC_CHARGER_9V_MUIC:
+	case ATTACHED_DEV_AFC_CHARGER_DISABLED_MUIC:
 	case ATTACHED_DEV_QC_CHARGER_5V_MUIC:
 	case ATTACHED_DEV_QC_CHARGER_9V_MUIC:
 		return true;
@@ -999,6 +1000,8 @@ static int muic_manager_get_property(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_AFC_CHARGER_MODE:
 		break;
+	case POWER_SUPPLY_PROP_PM_VCHGIN:
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -1016,23 +1019,25 @@ static int muic_manager_set_property(struct power_supply *psy,
 	int ret;
 
 	switch (psp) {
-		case POWER_SUPPLY_PROP_AFC_CHARGER_MODE:
-			MUIC_PDATA_FUNC_MULTI_PARAM(muic_if->pm_chgin_irq,
-				muic_if->muic_data, val->intval, &ret);
-			break;
-		case POWER_SUPPLY_PROP_MAX ... POWER_SUPPLY_EXT_PROP_MAX:
-			switch (ext_psp) {
-			case POWER_SUPPLY_EXT_PROP_CURRENT_MEASURE:
-				muic_if->is_bypass = true;
-				if (muic_if->set_bypass)
-					muic_if->set_bypass(muic_if->muic_data);
-				break;
-			default:
-				break;
-			}
+	case POWER_SUPPLY_PROP_AFC_CHARGER_MODE:
+		break;
+	case POWER_SUPPLY_PROP_PM_VCHGIN:
+		MUIC_PDATA_FUNC_MULTI_PARAM(muic_if->pm_chgin_irq,
+			muic_if->muic_data, val->intval, &ret);
+		break;
+	case POWER_SUPPLY_PROP_MAX ... POWER_SUPPLY_EXT_PROP_MAX:
+		switch (ext_psp) {
+		case POWER_SUPPLY_EXT_PROP_CURRENT_MEASURE:
+			muic_if->is_bypass = true;
+			if (muic_if->set_bypass)
+				muic_if->set_bypass(muic_if->muic_data);
 			break;
 		default:
-			return -EINVAL;
+			break;
+		}
+		break;
+	default:
+		return -EINVAL;
 	}
 	return 0;
 }

@@ -23,6 +23,9 @@
 #include <linux/printk.h>
 #include <linux/skbuff.h>
 #include <linux/slab.h>
+#ifdef CONFIG_RKP_MODULE_SUPPORT
+#include <linux/rkp.h>
+#endif
 
 #include <asm/byteorder.h>
 #include <asm/cacheflush.h>
@@ -30,8 +33,6 @@
 #include <asm/set_memory.h>
 
 #include "bpf_jit.h"
-
-int bpf_jit_enable __read_mostly;
 
 #define TMP_REG_1 (MAX_BPF_JIT_REG + 0)
 #define TMP_REG_2 (MAX_BPF_JIT_REG + 1)
@@ -330,7 +331,7 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx)
 	const int i = insn - ctx->prog->insnsi;
 	const bool is64 = BPF_CLASS(code) == BPF_ALU64;
 	const bool isdw = BPF_SIZE(code) == BPF_DW;
-	u8 jmp_cond;
+	u8 jmp_cond, reg;
 	s32 jmp_offset;
 
 #define check_imm(bits, imm) do {				\
@@ -706,19 +707,28 @@ emit_cond_jmp:
 			break;
 		}
 		break;
+
 	/* STX XADD: lock *(u32 *)(dst + off) += src */
 	case BPF_STX | BPF_XADD | BPF_W:
 	/* STX XADD: lock *(u64 *)(dst + off) += src */
 	case BPF_STX | BPF_XADD | BPF_DW:
-		emit_a64_mov_i(1, tmp, off, ctx);
-		emit(A64_ADD(1, tmp, tmp, dst), ctx);
-		emit(A64_PRFM(tmp, PST, L1, STRM), ctx);
-		emit(A64_LDXR(isdw, tmp2, tmp), ctx);
-		emit(A64_ADD(isdw, tmp2, tmp2, src), ctx);
-		emit(A64_STXR(isdw, tmp2, tmp, tmp3), ctx);
-		jmp_offset = -3;
-		check_imm19(jmp_offset);
-		emit(A64_CBNZ(0, tmp3, jmp_offset), ctx);
+		if (!off) {
+			reg = dst;
+		} else {
+			emit_a64_mov_i(1, tmp, off, ctx);
+			emit(A64_ADD(1, tmp, tmp, dst), ctx);
+			reg = tmp;
+		}
+		if (cpus_have_cap(ARM64_HAS_LSE_ATOMICS)) {
+			emit(A64_STADD(isdw, reg, src), ctx);
+		} else {
+			emit(A64_LDXR(isdw, tmp2, reg), ctx);
+			emit(A64_ADD(isdw, tmp2, tmp2, src), ctx);
+			emit(A64_STXR(isdw, tmp2, reg, tmp3), ctx);
+			jmp_offset = -3;
+			check_imm19(jmp_offset);
+			emit(A64_CBNZ(0, tmp3, jmp_offset), ctx);
+		}
 		break;
 
 	/* R0 = ntohx(*(size *)(((struct sk_buff *)R6)->data + imm)) */
@@ -927,6 +937,9 @@ struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *prog)
 	prog->bpf_func = (void *)ctx.image;
 	prog->jited = 1;
 	prog->jited_len = image_size;
+#ifdef CONFIG_RKP_MODULE_SUPPORT
+	uh_call(UH_APP_RKP, RKP_BFP_LOAD, (u64)header, (u64)(header->pages * PAGE_SIZE), RKP_BPF_JIT_LOAD, 0);
+#endif
 
 out_off:
 	kfree(ctx.offset);
@@ -936,3 +949,25 @@ out:
 					   tmp : orig_prog);
 	return prog;
 }
+
+#ifdef CONFIG_CFI_CLANG
+bool arch_bpf_jit_check_func(const struct bpf_prog *prog)
+{
+	const uintptr_t func = (const uintptr_t)prog->bpf_func;
+
+	/*
+	 * bpf_func must be correctly aligned and within the correct region.
+	 * module_alloc places JIT code in the module region, unless
+	 * ARM64_MODULE_PLTS is enabled, in which case we might end up using
+	 * the vmalloc region too.
+	 */
+	if (unlikely(!IS_ALIGNED(func, sizeof(u32))))
+		return false;
+
+	if (IS_ENABLED(CONFIG_ARM64_MODULE_PLTS) &&
+			is_vmalloc_addr(prog->bpf_func))
+		return true;
+
+	return (func >= MODULES_VADDR && func < MODULES_END);
+}
+#endif

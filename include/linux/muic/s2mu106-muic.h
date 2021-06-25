@@ -303,6 +303,16 @@ enum s2mu106_muic_registers {
 #define S2MU106_BCD_RESCAN_SHIFT		0
 #define S2MU106_BCD_RESCAN_MASK		        (0x1 << S2MU106_BCD_RESCAN_SHIFT)
 
+/* S2MU106 MUIC AFC_OTP3 Register (0x68) */
+#define S2MU106_COMP_REF_SEL_SHIFT		5
+#define S2MU106_HCOMP_REF_SEL_SHIFT		0
+
+#define S2MU106_COMP_REF_SEL_MASK               (0x7 << S2MU106_COMP_REF_SEL_SHIFT)
+#define S2MU106_COMP_REF_SEL_0p3V_MASK          (0x4 << S2MU106_COMP_REF_SEL_SHIFT)
+#define S2MU106_COMP_REF_SEL_0p4V_MASK          (0x2 << S2MU106_COMP_REF_SEL_SHIFT)
+#define S2MU106_HCOMP_REF_SEL_MASK              (0x1f << S2MU106_HCOMP_REF_SEL_SHIFT)
+#define S2MU106_HCOMP_REF_SEL_1p2V_MASK         (0x8 << S2MU106_HCOMP_REF_SEL_SHIFT)
+
 /* S2MU106 MUIC MUIC_CTRL1 Register (0x6D) */
 #define S2MU106_TX_DPDM_SHORT_SHIFT		7
 #define S2MU106_TX_DP_RDN_SHIFT			6
@@ -780,6 +790,11 @@ typedef enum {
 	S2MU106_IRQ_SKIP,
 } t_irq_status;
 
+typedef enum {
+	S2MU106_AFC_5V_to_9V,
+	S2MU106_AFC_9V_to_5V,
+} t_afc_vol_change;
+
 /* muic chip specific internal data structure
 * that setted at muic-xxxx.c file
 */
@@ -822,6 +837,7 @@ struct s2mu106_muic_data {
 	int irq_mrxtrf;
 	int irq_mrxrdy;
 	struct power_supply *psy_pm;
+	struct power_supply *psy_chg;
 #endif
 	bool afc_check;
 #if defined(CONFIG_HV_MUIC_S2MU106_AFC)

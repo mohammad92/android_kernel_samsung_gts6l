@@ -20,7 +20,10 @@ obj-$(CONFIG_INPUT_MATRIXKMAP)	+= matrix-keymap.o
 obj-$(CONFIG_INPUT_LEDS)	+= input-leds.o
 obj-$(CONFIG_INPUT_MOUSEDEV)	+= mousedev.o
 obj-$(CONFIG_INPUT_JOYDEV)	+= joydev.o
-obj-$(CONFIG_INPUT_EVDEV)	+= evdev.o
+obj-$(CONFIG_INPUT_EVDEV)	+= evdev.o input_booster.o
+obj-$(CONFIG_ARCH_QCOM)	+= input_booster_qc.o
+obj-$(CONFIG_ARCH_QCOM)	+= input_booster_qc.o
+obj-$(CONFIG_ARCH_)	+= input_booster_api_qc.o
 obj-$(CONFIG_INPUT_EVBUG)	+= evbug.o
 
 obj-$(CONFIG_INPUT_KEYBOARD)	+= keyboard/
@@ -36,5 +39,7 @@ obj-$(CONFIG_INPUT_KEYCOMBO)	+= keycombo.o
 obj-$(CONFIG_TOUCHSCREEN_DUMP_MODE)	+= sec_tsp_dumpkey.o
 
 obj-$(CONFIG_RMI4_CORE)		+= rmi4/
+obj-$(CONFIG_SMI130)   += sensors/smi130/
+
 
 obj-$(CONFIG_INPUT_WACOM)	+= wacom/

@@ -815,6 +815,16 @@ static int s2asl01_set_property(struct power_supply *psy,
 		case POWER_SUPPLY_EXT_PROP_POWERMETER_ENABLE:
 			s2asl01_powermeter_onoff(switching, val->intval);
 			break;
+		case POWER_SUPPLY_EXT_PROP_IC_RESET:
+			if (switching->pdata->bat_type & LIMITER_SUB) {
+				pr_info("%s: Reset sub limiter IC\n", __func__);
+				gpio_direction_output(switching->pdata->bat_enb, 1);
+				usleep_range(500, 1000);
+				gpio_direction_output(switching->pdata->bat_enb, 0);
+				msleep(50);
+				s2asl01_init_regs(switching);
+			}
+			break;
 		default:
 			return -EINVAL;
 		}

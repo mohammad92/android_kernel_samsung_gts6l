@@ -23,8 +23,8 @@ const char *cisd_data_str[] = {
 	"BATT_THM_MIN", "CHG_THM_MAX", "CHG_THM_MIN", "WPC_THM_MAX", "WPC_THM_MIN", "USB_THM_MAX", "USB_THM_MIN",
 	"CHG_BATT_THM_MAX", "CHG_BATT_THM_MIN", "CHG_CHG_THM_MAX", "CHG_CHG_THM_MIN", "CHG_WPC_THM_MAX",
 	"CHG_WPC_THM_MIN", "CHG_USB_THM_MAX", "CHG_USB_THM_MIN", "USB_OVERHEAT_CHARGING", "UNSAFETY_VOLT",
-	"UNSAFETY_TEMP", "SAFETY_TIMER", "VSYS_OVP", "VBAT_OVP", "USB_OVERHEAT_RAPID_CHANGE", "BUCK_OFF",
-	"USB_OVERHEAT_ALONE", "DROP_SENSOR"
+	"UNSAFETY_TEMP", "SAFETY_TIMER", "VSYS_OVP", "VBAT_OVP", "USB_OVERHEAT_RAPID_CHANGE", "ASOC",
+	"USB_OVERHEAT_ALONE", "CAP_NOM"
 };
 const char *cisd_data_str_d[] = {
 	"FULL_CNT_D", "CAP_MAX_D", "CAP_MIN_D", "RECHARGING_CNT_D", "VALERT_CNT_D", "WIRE_CNT_D", "WIRELESS_CNT_D",
@@ -156,6 +156,16 @@ bool sec_bat_cisd_check(struct sec_battery_info *battery)
 			pcisd->data[CISD_DATA_CAP_MAX_PER_DAY] = capcurr_val.intval;
 		if (capcurr_val.intval < pcisd->data[CISD_DATA_CAP_MIN_PER_DAY])
 			pcisd->data[CISD_DATA_CAP_MIN_PER_DAY] = capcurr_val.intval;
+
+		capcurr_val.intval = SEC_BATTERY_CAPACITY_AGEDCELL;
+		psy_do_property(battery->pdata->fuelgauge_name, get,
+			POWER_SUPPLY_PROP_ENERGY_NOW, capcurr_val);
+		if (capcurr_val.intval == -1) {
+			dev_info(battery->dev, "%s: [CISD] FG I2C fail. skip cisd check \n", __func__);
+			return ret;
+		}
+		pcisd->data[CISD_DATA_CAP_NOM] = capcurr_val.intval;
+		dev_info(battery->dev, "%s: [CISD] CAP_NOM %dmAh\n", __func__, pcisd->data[CISD_DATA_CAP_NOM]);
 	}
 
 	if (battery->temperature > pcisd->data[CISD_DATA_BATT_TEMP_MAX])
@@ -398,18 +408,11 @@ static unsigned int convert_wc_index_to_pad_id(unsigned int wc_index)
 void set_cisd_pad_data(struct sec_battery_info *battery, const char* buf)
 {
 	struct cisd* pcisd = &battery->cisd;
-	unsigned int pad_index, pad_total_count, pad_id, pad_count;
+	unsigned int pad_total_count, pad_id, pad_count;
 	struct pad_data* pad_data;
 	int i, x;
 
 	pr_info("%s: %s\n", __func__, buf);
-	if (sscanf(buf, "%10d %n", &pad_index, &x) <= 0) {
-		pr_info("%s: failed to read pad index\n", __func__);
-		return;
-	}
-	buf += (size_t)x;
-	pr_info("%s: stored pad_index(%d)\n", __func__, pad_index);
-
 	if (pcisd->pad_count > 0)
 		init_cisd_pad_data(pcisd);
 
@@ -418,7 +421,14 @@ void set_cisd_pad_data(struct sec_battery_info *battery, const char* buf)
 		return;
 	}
 
-	if (!pad_index) {
+	if (sscanf(buf, "%10u %n", &pad_total_count, &x) <= 0) {
+		pr_info("%s: failed to read pad index\n", __func__);
+		return;
+	}
+	buf += (size_t)x;
+	pr_info("%s: stored pad_total_count(%d)\n", __func__, pad_total_count);
+
+	if (!pad_total_count) {
 		for (i = WC_DATA_INDEX + 1; i < WC_DATA_MAX; i++) {
 			if (sscanf(buf, "%10d %n", &pad_count, &x) <= 0)
 				break;
@@ -436,10 +446,8 @@ void set_cisd_pad_data(struct sec_battery_info *battery, const char* buf)
 			}
 		}
 	} else {
-		if ((sscanf(buf, "%10d %n", &pad_total_count, &x) <= 0) ||
-			(pad_total_count >= MAX_PAD_ID))
+		if (pad_total_count >= MAX_PAD_ID)
 			return;
-		buf += (size_t)x;
 
 		pr_info("%s: add pad data(count: %d)\n", __func__, pad_total_count);
 		for (i = 0; i < pad_total_count; i++) {

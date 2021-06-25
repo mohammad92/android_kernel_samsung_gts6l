@@ -848,6 +848,7 @@ int mms_set_power_state(struct mms_ts_info *info, u8 mode)
 {
 	u8 wbuf[3];
 	u8 rbuf[1];
+	int retry = 10;
 
 	input_dbg(false, &info->client->dev, "%s [START]\n", __func__);
 	input_dbg(false, &info->client->dev, "%s - mode[%u]\n", __func__, mode);
@@ -856,18 +857,20 @@ int mms_set_power_state(struct mms_ts_info *info, u8 mode)
 	wbuf[1] = MIP_R1_CTRL_POWER_STATE;
 	wbuf[2] = mode;
 
-	if (mms_i2c_write(info, wbuf, 3)) {
-		input_err(true, &info->client->dev, "%s [ERROR] mip4_ts_i2c_write\n", __func__);
-		return -EIO;
-	}
+	do {
+		if (mms_i2c_write(info, wbuf, 3)) {
+			input_err(true, &info->client->dev, "%s [ERROR] mip4_ts_i2c_write\n", __func__);
+			return -EIO;
+		}
 
-	msleep(20);
+		msleep(20);
+		if (mms_i2c_read(info, wbuf, 2, rbuf, 1)) {
+			input_err(true, &info->client->dev, "%s [ERROR] read %x %x, rbuf %x\n",
+					__func__, wbuf[0], wbuf[1], rbuf[0]);
+			return -EIO;
+		}
 
-	if (mms_i2c_read(info, wbuf, 2, rbuf, 1)) {
-		input_err(true, &info->client->dev, "%s [ERROR] read %x %x, rbuf %x\n",
-				__func__, wbuf[0], wbuf[1], rbuf[0]);
-		return -EIO;
-	}
+	} while ((retry--) && (rbuf[0] != mode));
 
 	if (rbuf[0] != mode) {
 		input_err(true, &info->client->dev, "%s [ERROR] not changed to %s mode, rbuf %x\n",

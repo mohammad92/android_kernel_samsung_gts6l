@@ -94,8 +94,8 @@ static int sdp_crypto_init_rng(void)
 	set_fs(fs_type);
 
 	if (read != SDP_CRYPTO_RNG_SEED_SIZE) {
-		printk(KERN_ERR "sdp_crypto: failed to get enough random bytes "
-			"(read=%d / request=%d)\n", read, SDP_CRYPTO_RNG_SEED_SIZE);
+		printk(KERN_ERR "sdp_crypto: failed to get enough random bytes (read=%d / request=%d)\n",
+			read, SDP_CRYPTO_RNG_SEED_SIZE);
 		res = -EINVAL;
 		goto out;
 	}
@@ -103,8 +103,7 @@ static int sdp_crypto_init_rng(void)
 	// create drbg for random number generation
 	rng = crypto_alloc_rng("stdrng", 0, 0);
 	if (IS_ERR(rng)) {
-		printk(KERN_ERR "sdp_crypto: failed to allocate rng, "
-			"not available (%ld)\n", PTR_ERR(rng));
+		printk(KERN_ERR "sdp_crypto: failed to allocate rng, not available (%ld)\n", PTR_ERR(rng));
 		res = PTR_ERR(rng);
 		rng = NULL;
 		goto out;
@@ -153,10 +152,9 @@ again:
 		msleep(500);
 		trial--;
 
-	} while(trial > 0);
+	} while (trial > 0);
 
-	printk(KERN_ERR "sdp_crypto: failed to initialize "
-			"sdp crypto rng handler again (err:%d)\n", res);
+	printk(KERN_ERR "sdp_crypto: failed to initialize sdp crypto rng handler again (err:%d)\n", res);
 	return res;
 #else
 	get_random_bytes(raw_key, nbytes);
@@ -214,6 +212,7 @@ int sdp_crypto_hash_sha512(const u8 *data, u32 data_len, u8 *hashed)
 
 	{
 		SHASH_DESC_ON_STACK(desc, tfm);
+
 		desc->tfm = tfm;
 		desc->flags = 0;
 
@@ -231,8 +230,7 @@ int sdp_crypto_aes_gcm_encrypt(struct crypto_aead *tfm,
 	u8 *__aad;
 
 	if (tfm == NULL || iv == NULL || data == NULL || auth == NULL) {
-		printk(KERN_ERR
-			"sdp_crypto_aes_gcm_encrypt: failed due to invalid input\n");
+		printk(KERN_ERR "%s: failed due to invalid input\n", __func__);
 		return -EINVAL;
 	}
 
@@ -272,8 +270,7 @@ int sdp_crypto_aes_gcm_encrypt_pack(struct crypto_aead *tfm, gcm_pack *pack)
 	size_t __data_len = CONV_TYPE_TO_DLEN(pack->type);
 
 	if (unlikely(tfm == NULL || pack == NULL || __data_len == 0)) {
-		printk(KERN_ERR
-			"sdp_crypto_aes_gcm_encrypt_pack: failed due to invalid input\n");
+		printk(KERN_ERR "%s: failed due to invalid input\n", __func__);
 		return -EINVAL;
 	}
 
@@ -299,9 +296,8 @@ int sdp_crypto_aes_gcm_encrypt_pack(struct crypto_aead *tfm, gcm_pack *pack)
 	aead_request_set_ad(aead_req, __aad_len);
 
 	err = crypto_aead_encrypt(aead_req);
-	if (!err) {
+	if (!err)
 		memcpy(pack->data, __data, __data_len + __auth_len);
-	}
 	kzfree(aead_req);
 	return err;
 }
@@ -316,8 +312,7 @@ int sdp_crypto_aes_gcm_decrypt(struct crypto_aead *tfm,
 	u8 *__aad;
 
 	if (tfm == NULL || iv == NULL || data == NULL || auth == NULL) {
-		printk(KERN_ERR
-			"sdp_crypto_aes_gcm_decrypt: failed due to invalid input\n");
+		printk(KERN_ERR "%s: failed due to invalid input\n", __func__);
 		return -EINVAL;
 	}
 	reqsize = sizeof(*aead_req) + crypto_aead_reqsize(tfm);
@@ -356,8 +351,7 @@ int sdp_crypto_aes_gcm_decrypt_pack(struct crypto_aead *tfm, gcm_pack *pack)
 	size_t __data_len = CONV_TYPE_TO_DLEN(pack->type);
 
 	if (unlikely(tfm == NULL || pack == NULL || __data_len == 0)) {
-		printk(KERN_ERR
-			"sdp_crypto_aes_gcm_decrypt_pack: failed due to invalid input\n");
+		printk(KERN_ERR "%s: failed due to invalid input\n", __func__);
 		return -EINVAL;
 	}
 	reqsize = sizeof(*aead_req) + crypto_aead_reqsize(tfm);
@@ -382,9 +376,8 @@ int sdp_crypto_aes_gcm_decrypt_pack(struct crypto_aead *tfm, gcm_pack *pack)
 	aead_request_set_ad(aead_req, __aad_len);
 
 	err = crypto_aead_decrypt(aead_req);
-	if (!err) {
+	if (!err)
 		memcpy(pack->data, __data, __data_len);
-	}
 	kzfree(aead_req);
 	return err;
 }

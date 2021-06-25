@@ -33,6 +33,8 @@
 #include <linux/ccic/max77705C_pass2_PID04.h>
 #elif defined(CONFIG_SEC_R3Q_PROJECT) || defined(CONFIG_SEC_BLOOMQ_PROJECT)
 #include <linux/ccic/max77705C_pass2_PID05.h>
+#elif defined(CONFIG_SEC_A82XQ_PROJECT)
+#include <linux/ccic/max77705C_pass2_PID07.h>
 #else
 #include <linux/ccic/max77705C_pass2.h>
 #endif
@@ -41,12 +43,15 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #endif /* CONFIG_OF */
+#include "../battery_v2/include/sec_charging_common.h"
 
 #define I2C_ADDR_PMIC	(0xCC >> 1)	/* Top sys, Haptic */
 #define I2C_ADDR_MUIC	(0x4A >> 1)
 #define I2C_ADDR_CHG    (0xD2 >> 1)
 #define I2C_ADDR_FG     (0x6C >> 1)
 #define I2C_ADDR_DEBUG  (0xC4 >> 1)
+
+#define I2C_RETRY_CNT	3
 
 /*
  * pmic revision information
@@ -91,10 +96,16 @@ int max77705_read_reg(struct i2c_client *i2c, u8 reg, u8 *dest)
 {
 	struct max77705_dev *max77705 = i2c_get_clientdata(i2c);
 	struct otg_notify *o_notify = get_otg_notify();
-	int ret;
+	int ret, i;
 
 	mutex_lock(&max77705->i2c_lock);
-	ret = i2c_smbus_read_byte_data(i2c, reg);
+	for (i = 0; i < I2C_RETRY_CNT; ++i) {
+		ret = i2c_smbus_read_byte_data(i2c, reg);
+		if (ret >= 0)
+			break;
+		pr_info("%s:%s reg(0x%x), ret(%d), i2c_retry_cnt(%d/%d)\n",
+			MFD_DEV_NAME, __func__, reg, ret, i + 1, I2C_RETRY_CNT);
+	}
 	mutex_unlock(&max77705->i2c_lock);
 	if (ret < 0) {
 		pr_info("%s:%s reg(0x%x), ret(%d)\n", MFD_DEV_NAME, __func__, reg, ret);
@@ -115,10 +126,16 @@ int max77705_bulk_read(struct i2c_client *i2c, u8 reg, int count, u8 *buf)
 {
 	struct max77705_dev *max77705 = i2c_get_clientdata(i2c);
 	struct otg_notify *o_notify = get_otg_notify();
-	int ret;
+	int ret, i;
 
 	mutex_lock(&max77705->i2c_lock);
-	ret = i2c_smbus_read_i2c_block_data(i2c, reg, count, buf);
+	for (i = 0; i < I2C_RETRY_CNT; ++i) {
+		ret = i2c_smbus_read_i2c_block_data(i2c, reg, count, buf);
+		if (ret >= 0)
+			break;
+		pr_info("%s:%s reg(0x%x), ret(%d), i2c_retry_cnt(%d/%d)\n",
+			MFD_DEV_NAME, __func__, reg, ret, i + 1, I2C_RETRY_CNT);
+	}
 	mutex_unlock(&max77705->i2c_lock);
 	if (ret < 0) {
 #if defined(CONFIG_USB_HW_PARAM)
@@ -135,10 +152,16 @@ int max77705_read_word(struct i2c_client *i2c, u8 reg)
 {
 	struct max77705_dev *max77705 = i2c_get_clientdata(i2c);
 	struct otg_notify *o_notify = get_otg_notify();
-	int ret;
+	int ret, i;
 
 	mutex_lock(&max77705->i2c_lock);
-	ret = i2c_smbus_read_word_data(i2c, reg);
+	for (i = 0; i < I2C_RETRY_CNT; ++i) {
+		ret = i2c_smbus_read_word_data(i2c, reg);
+		if (ret >= 0)
+			break;
+		pr_info("%s:%s reg(0x%x), ret(%d), i2c_retry_cnt(%d/%d)\n",
+			MFD_DEV_NAME, __func__, reg, ret, i + 1, I2C_RETRY_CNT);
+	}
 	mutex_unlock(&max77705->i2c_lock);
 #if defined(CONFIG_USB_HW_PARAM)
 	if (ret < 0) {
@@ -154,13 +177,19 @@ int max77705_write_reg(struct i2c_client *i2c, u8 reg, u8 value)
 {
 	struct max77705_dev *max77705 = i2c_get_clientdata(i2c);
 	struct otg_notify *o_notify = get_otg_notify();
-	int ret = -EIO;
+	int ret = -EIO, i;
 	int timeout = 2000; /* 2sec */
 	int interval = 100;
 
 	while (ret == -EIO) {
 		mutex_lock(&max77705->i2c_lock);
-		ret = i2c_smbus_write_byte_data(i2c, reg, value);
+		for (i = 0; i < I2C_RETRY_CNT; ++i) {
+			ret = i2c_smbus_write_byte_data(i2c, reg, value);
+			if ((ret >= 0) || (ret == -EIO))
+				break;
+			pr_info("%s:%s reg(0x%02x), ret(%d), i2c_retry_cnt(%d/%d)\n",
+				MFD_DEV_NAME, __func__, reg, ret, i + 1, I2C_RETRY_CNT);
+		}
 		mutex_unlock(&max77705->i2c_lock);
 
 		if (ret < 0) {
@@ -186,13 +215,19 @@ int max77705_bulk_write(struct i2c_client *i2c, u8 reg, int count, u8 *buf)
 {
 	struct max77705_dev *max77705 = i2c_get_clientdata(i2c);
 	struct otg_notify *o_notify = get_otg_notify();
-	int ret = -EIO;
+	int ret = -EIO, i;
 	int timeout = 2000; /* 2sec */
 	int interval = 100;
 
 	while (ret == -EIO) {
 		mutex_lock(&max77705->i2c_lock);
-		ret = i2c_smbus_write_i2c_block_data(i2c, reg, count, buf);
+		for (i = 0; i < I2C_RETRY_CNT; ++i) {
+			ret = i2c_smbus_write_i2c_block_data(i2c, reg, count, buf);
+			if ((ret >= 0) || (ret == -EIO))
+				break;
+			pr_info("%s:%s reg(0x%x), ret(%d), i2c_retry_cnt(%d/%d)\n",
+				MFD_DEV_NAME, __func__, reg, ret, i + 1, I2C_RETRY_CNT);
+		}
 		mutex_unlock(&max77705->i2c_lock);
 
 		if (ret < 0) {
@@ -218,10 +253,16 @@ int max77705_write_word(struct i2c_client *i2c, u8 reg, u16 value)
 {
 	struct max77705_dev *max77705 = i2c_get_clientdata(i2c);
 	struct otg_notify *o_notify = get_otg_notify();
-	int ret;
+	int ret, i;
 
 	mutex_lock(&max77705->i2c_lock);
-	ret = i2c_smbus_write_word_data(i2c, reg, value);
+	for (i = 0; i < I2C_RETRY_CNT; ++i) {
+		ret = i2c_smbus_write_word_data(i2c, reg, value);
+		if (ret >= 0)
+			break;
+		pr_info("%s:%s reg(0x%x), ret(%d), i2c_retry_cnt(%d/%d)\n",
+			MFD_DEV_NAME, __func__, reg, ret, i + 1, I2C_RETRY_CNT);
+	}
 	mutex_unlock(&max77705->i2c_lock);
 	if (ret < 0) {
 #if defined(CONFIG_USB_HW_PARAM)
@@ -238,11 +279,17 @@ int max77705_update_reg(struct i2c_client *i2c, u8 reg, u8 val, u8 mask)
 {
 	struct max77705_dev *max77705 = i2c_get_clientdata(i2c);
 	struct otg_notify *o_notify = get_otg_notify();
-	int ret;
+	int ret, i;
 	u8 old_val, new_val;
 
 	mutex_lock(&max77705->i2c_lock);
-	ret = i2c_smbus_read_byte_data(i2c, reg);
+	for (i = 0; i < I2C_RETRY_CNT; ++i) {
+		ret = i2c_smbus_read_byte_data(i2c, reg);
+		if (ret >= 0)
+			break;
+		pr_info("%s:%s read reg(0x%x), ret(%d), i2c_retry_cnt(%d/%d)\n",
+			MFD_DEV_NAME, __func__, reg, ret, i + 1, I2C_RETRY_CNT);
+	}
 	if (ret < 0) {
 #if defined(CONFIG_USB_HW_PARAM)
 		if (o_notify)
@@ -253,7 +300,13 @@ int max77705_update_reg(struct i2c_client *i2c, u8 reg, u8 val, u8 mask)
 	if (ret >= 0) {
 		old_val = ret & 0xff;
 		new_val = (val & mask) | (old_val & (~mask));
-		ret = i2c_smbus_write_byte_data(i2c, reg, new_val);
+		for (i = 0; i < I2C_RETRY_CNT; ++i) {
+			ret = i2c_smbus_write_byte_data(i2c, reg, new_val);
+			if (ret >= 0)
+				break;
+			pr_info("%s:%s write reg(0x%x), ret(%d), i2c_retry_cnt(%d/%d)\n",
+				MFD_DEV_NAME, __func__, reg, ret, i + 1, I2C_RETRY_CNT);
+		}
 		if (ret < 0) {
 #if defined(CONFIG_USB_HW_PARAM)
 			if (o_notify)
@@ -273,6 +326,7 @@ static int of_max77705_dt(struct device *dev, struct max77705_platform_data *pda
 {
 	struct device_node *np_max77705 = dev->of_node;
 	struct device_node *np_battery;
+	int ret = 0;
 
 	if (!np_max77705)
 		return -EINVAL;
@@ -295,6 +349,10 @@ static int of_max77705_dt(struct device *dev, struct max77705_platform_data *pda
 			pr_info("%s: can't get wpc_en (%d)\n", __func__, pdata->wpc_en);
 			pdata->wpc_en = 0;
 		}
+		ret = of_property_read_string(np_battery,
+				"battery,wireless_charger_name", (char const **)&pdata->wireless_charger_name);
+		if (ret)
+			pr_info("%s: Wireless charger name is Empty\n", __func__);
 	}
 	pdata->support_audio = of_property_read_bool(np_max77705, "max77705,support-audio");
 	pr_info("%s: support_audio %d\n", __func__, pdata->support_audio);
@@ -522,19 +580,34 @@ static int max77705_fuelgauge_read_vcell(struct max77705_dev *max77705)
 
 static void max77705_wc_control(struct max77705_dev *max77705, bool enable)
 {
-	if (max77705->pdata->wpc_en) {
-		if (enable) {
-			gpio_direction_output(max77705->pdata->wpc_en, 0);
-			pr_info("%s: WC CONTROL: ENABLE", __func__);
-		} else {
-			gpio_direction_output(max77705->pdata->wpc_en, 1);
-			pr_info("%s: WC CONTROL: DISABLE", __func__);
-		}
-		pr_info("%s: wpc_en(%d)\n",
-			__func__, gpio_get_value(max77705->pdata->wpc_en));
+	struct power_supply *psy = NULL;
+	union power_supply_propval value = {0, };
+	char wpc_en_status[2];
+
+	psy = get_power_supply_by_name(max77705->pdata->wireless_charger_name);
+
+	if (psy) {
+		wpc_en_status[0] = WPC_EN_CCIC;
+		wpc_en_status[1] = enable ? true : false;
+		value.strval= wpc_en_status;
+		if ((psy->desc->set_property != NULL) &&
+			(psy->desc->set_property(psy, (enum power_supply_property)POWER_SUPPLY_EXT_PROP_WPC_EN, &value) >= 0))
+			pr_info("%s: WC CONTROL: %s\n", __func__, wpc_en_status[1] ? "Enable" : "Disable");
+		power_supply_put(psy);
 	} else {
-		pr_info("%s : no wpc_en\n", __func__);
+		if (max77705->pdata->wpc_en) {
+			if (enable) {
+				gpio_direction_output(max77705->pdata->wpc_en, 0);
+				pr_info("%s: WC CONTROL: ENABLE\n", __func__);
+			} else {
+				gpio_direction_output(max77705->pdata->wpc_en, 1);
+				pr_info("%s: WC CONTROL: DISABLE\n", __func__);
+			}
+		} else {
+			pr_info("%s : no wpc_en\n", __func__);
+		}
 	}
+	pr_info("%s: wpc_en(%d)\n", __func__, gpio_get_value(max77705->pdata->wpc_en));
 }
 
 int max77705_usbc_fw_update(struct max77705_dev *max77705,
@@ -882,6 +955,19 @@ static u8 max77705_revision_check(u8 pmic_id, u8 pmic_rev) {
 	}
 	return logical_id;
 }
+
+void max77705_register_pdmsg_func(struct max77705_dev *max77705,
+	void (*check_pdmsg)(void *data, u8 pdmsg), void *data)
+{
+	if (!max77705) {
+		pr_err("%s max77705 is null\n", __func__);
+		return;
+	}
+
+	max77705->check_pdmsg = check_pdmsg;
+	max77705->usbc_data = data;
+}
+EXPORT_SYMBOL_GPL(max77705_register_pdmsg_func);
 
 static int max77705_i2c_probe(struct i2c_client *i2c,
 				const struct i2c_device_id *dev_id)

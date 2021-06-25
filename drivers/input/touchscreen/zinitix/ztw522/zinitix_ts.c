@@ -3666,6 +3666,7 @@ static int zt75xx_ts_set_lowpowermode(struct zt75xx_ts_info *info, u8 mode)
 {
 	u8 prev_work_state;
 	int i;
+	int retval;
 
 	input_info(true, &info->client->dev, "%s: %s(%02X)\n", __func__,
 			mode == TO_LOWPOWER_MODE ? "ENTER" : "EXIT", info->lowpower_mode);
@@ -3676,9 +3677,15 @@ static int zt75xx_ts_set_lowpowermode(struct zt75xx_ts_info *info, u8 mode)
 	if (mode == TO_TOUCH_MODE) {
 		info->work_state = SLEEP_MODE_OUT;
 
-		write_reg(info->client, 0x0A, 0x0A);
+		for (i = 0; i < 5; i++) {
+			write_reg(info->client, 0x0A, 0x0A);
 
-		write_cmd(info->client, ZT75XX_WAKEUP_CMD);
+			retval = write_cmd(info->client, ZT75XX_WAKEUP_CMD);
+			if (retval == I2C_SUCCESS)
+				break;
+			else
+				input_err(true, &info->client->dev, "%s: mode set failed, %d\n", __func__, i);
+		}
 
 		zt75xx_set_optional_mode(info, false);
 
@@ -3696,10 +3703,15 @@ static int zt75xx_ts_set_lowpowermode(struct zt75xx_ts_info *info, u8 mode)
 		esd_timer_stop(info);
 #endif
 
-		write_reg(info->client, 0x0A, 0x0A);
+		for (i = 0; i < 5; i++) {
+			write_reg(info->client, 0x0A, 0x0A);
 
-		if (write_reg(info->client, ZT75XX_LPM_MODE_REG, info->lowpower_mode) != I2C_SUCCESS)
-			input_err(true, &info->client->dev, "%s: fail lpm mode set\n", __func__);
+			retval = write_reg(info->client, ZT75XX_LPM_MODE_REG, info->lowpower_mode);
+			if (retval == I2C_SUCCESS)
+				break;
+			else
+				input_err(true, &info->client->dev, "%s: mode set failed, %d\n", __func__, i);
+		}
 
 		write_cmd(info->client, ZT75XX_SLEEP_CMD);
 
@@ -3905,7 +3917,7 @@ static void zt75xx_ts_close(struct input_dev *dev)
 			goto close_out;
 		}
 
-		if (info->main_tsp_status == SEC_INPUT_CUSTOM_NOTIFIER_MAIN_TOUCH_ON) {
+		if (info->main_tsp_status == NOTIFIER_MAIN_TOUCH_ON) {
 			input_info(true, &info->client->dev, "%s: main is on now, sub off\n", __func__);
 			zt75xx_ts_stop(info);
 			goto close_out;
@@ -3944,11 +3956,11 @@ static int zinitix_notifier_call(struct notifier_block *n, unsigned long data, v
 
 	input_dbg(true, &info->client->dev, "%s: %d\n", __func__, data);
 
-	if (data == SEC_INPUT_CUSTOM_NOTIFIER_MAIN_TOUCH_ON) {
+	if (data == NOTIFIER_MAIN_TOUCH_ON) {
 		info->main_tsp_status = data;
 		input_info(true, &info->client->dev, "%s: main_tsp open, stop device\n", __func__);
 		zt75xx_ts_stop(info);
-	} else if (data == SEC_INPUT_CUSTOM_NOTIFIER_MAIN_TOUCH_OFF) {
+	} else if (data == NOTIFIER_MAIN_TOUCH_OFF) {
 		info->main_tsp_status = data;
 		input_info(true, &info->client->dev, "%s: main_tsp close\n", __func__);
 	}
@@ -6138,6 +6150,10 @@ static int run_test_open_short(struct zt75xx_ts_info *info)
 	write_reg(client, ZT75XX_PERIODICAL_INTERRUPT_INTERVAL, 0);
 	write_cmd(client, ZT75XX_CLEAR_INT_STATUS_CMD);
 #endif
+	if (zt75xx_fix_active_mode(info, true) != I2C_SUCCESS) {
+		input_info(true, &client->dev, "%s: failed fix active mode\n", __func__);
+		goto out;
+	}
 
 	ret = ts_set_touchmode(TOUCH_CHANNEL_TEST_MODE);
 	if (ret < 0) {
@@ -6168,6 +6184,7 @@ static int run_test_open_short(struct zt75xx_ts_info *info)
 	}
 
 out:
+	zt75xx_fix_active_mode(info, false);
 #if ESD_TIMER_INTERVAL
 	esd_timer_start(CHECK_ESD_TIMER, info);
 	write_reg(client, ZT75XX_PERIODICAL_INTERRUPT_INTERVAL,
@@ -11184,7 +11201,7 @@ static int zt75xx_ts_probe(struct i2c_client *client,
 	mutex_init(&info->switching_mutex);
 	INIT_DELAYED_WORK(&info->switching_work, zt75xx_switching_work);
 
-	sec_input_register_notify(&info->nb, zinitix_notifier_call);
+	sec_input_register_notify(&info->nb, zinitix_notifier_call, 1);
 
 	/* Hall IC notify priority -> ftn -> register */
 	info->flip_status = -1;

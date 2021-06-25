@@ -1269,7 +1269,7 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 		&s_ctrl->sensordata->power_info;
 
 #if !defined(CONFIG_SEC_GTS5L_PROJECT) && !defined(CONFIG_SEC_GTS5LWIFI_PROJECT) && !defined(CONFIG_SEC_GTS6X_PROJECT) && \
-	!defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6LWIFI_PROJECT) && !defined(CONFIG_SEC_R3Q_PROJECT) //For factory module test
+	!defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6LWIFI_PROJECT) && !defined(CONFIG_SEC_R3Q_PROJECT) && !defined(CONFIG_SEC_A82XQ_PROJECT) //For factory module test
 	uint32_t version_id = 0;
 	uint16_t sensor_id = 0;
 	uint16_t expected_version_id = 0;
@@ -1353,7 +1353,7 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 #if !defined(CONFIG_SEC_WINNERLTE_PROJECT) && !defined(CONFIG_SEC_WINNERX_PROJECT) && !defined(CONFIG_SEC_ZODIAC_PROJECT)\
 	&& !defined(CONFIG_SEC_BEYONDXQ_PROJECT) && !defined(CONFIG_SEC_GTS5L_PROJECT) && !defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6X_PROJECT)\
 	&& !defined(CONFIG_SEC_GTS5LWIFI_PROJECT)	&& !defined(CONFIG_SEC_GTS6LWIFI_PROJECT) && !defined(CONFIG_SEC_R3Q_PROJECT)\
-	&& !defined(CONFIG_SEC_BLOOMQ_PROJECT)
+	&& !defined(CONFIG_SEC_BLOOMQ_PROJECT) && !defined(CONFIG_SEC_A82XQ_PROJECT)
 		//For factory module test
 		if (s_ctrl->soc_info.index == 3) { // check 3P8 or 3P9
 			sensor_id = s_ctrl->sensordata->slave_info.sensor_id;
@@ -1392,7 +1392,7 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 #endif
 
 #if !defined(CONFIG_SEC_R3Q_PROJECT) && !defined(CONFIG_SEC_GTS5L_PROJECT) && !defined(CONFIG_SEC_GTS6X_PROJECT) && !defined(CONFIG_SEC_GTS5LWIFI_PROJECT) && \
-	!defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6LWIFI_PROJECT)
+	!defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6LWIFI_PROJECT) && !defined(CONFIG_SEC_A82XQ_PROJECT)
 		if (s_ctrl->soc_info.index == 0) { // check Rear sak2l4sx
 			sensor_id = s_ctrl->sensordata->slave_info.sensor_id;
 			expected_version_id = s_ctrl->sensordata->slave_info.version_id;
@@ -1540,7 +1540,11 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 #endif
 
 #if defined(CONFIG_SAMSUNG_REAR_TRIPLE)
+#if defined(CONFIG_SEC_A82XQ_PROJECT)
+					case CAMERA_10:
+#else
 					case CAMERA_4:
+#endif
 						if (!msm_is_sec_get_rear3_hw_param(&hw_param)) {
 							if (hw_param != NULL) {
 								CAM_ERR(CAM_HWB, "[R3][I2C] Err\n");
@@ -1621,12 +1625,19 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 	case CAM_ACQUIRE_DEV: {
 		struct cam_sensor_acquire_dev sensor_acq_dev;
 		struct cam_create_dev_hdl bridge_params;
+		
+		CAM_INFO(CAM_SENSOR,
+			"sdbg CAM_ACQUIRE_DEV called, sensor_id:0x%x,sensor_slave_addr:0x%x[start]",
+			s_ctrl->sensordata->slave_info.sensor_id,
+			s_ctrl->sensordata->slave_info.sensor_slave_addr);
 
 		if ((s_ctrl->is_probe_succeed == 0) ||
 			(s_ctrl->sensor_state != CAM_SENSOR_INIT)) {
 			CAM_WARN(CAM_SENSOR,
-				"Not in right state to aquire %d",
-				s_ctrl->sensor_state);
+				"sdbg Not in right state to aquire %d sensor_id: 0x%x sensor_slave_addr:0x%x ",
+				s_ctrl->sensor_state,
+				s_ctrl->sensordata->slave_info.sensor_id,
+				s_ctrl->sensordata->slave_info.sensor_slave_addr);
 			rc = -EINVAL;
 			goto release_mutex;
 		}
@@ -1703,18 +1714,25 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 		s_ctrl->sensor_state = CAM_SENSOR_ACQUIRE;
 		s_ctrl->last_flush_req = 0;
 		CAM_INFO(CAM_SENSOR,
-			"CAM_ACQUIRE_DEV Success, sensor_id:0x%x,sensor_slave_addr:0x%x",
+			"sdbg CAM_ACQUIRE_DEV Success, sensor_id:0x%x,sensor_slave_addr:0x%x[done]",
 			s_ctrl->sensordata->slave_info.sensor_id,
 			s_ctrl->sensordata->slave_info.sensor_slave_addr);
 	}
 		break;
 	case CAM_RELEASE_DEV: {
+		CAM_INFO(CAM_SENSOR,
+			"sdbg CAM_RELEASE_DEV called, sensor_id:0x%x,sensor_slave_addr:0x%x [start]",
+			s_ctrl->sensordata->slave_info.sensor_id,
+			s_ctrl->sensordata->slave_info.sensor_slave_addr);
+
 		if ((s_ctrl->sensor_state == CAM_SENSOR_INIT) ||
 			(s_ctrl->sensor_state == CAM_SENSOR_START)) {
 			rc = -EINVAL;
 			CAM_WARN(CAM_SENSOR,
-			"Not in right state to release : %d",
-			s_ctrl->sensor_state);
+				"sdbg Not in right state to release %d sensor_id: 0x%x sensor_slave_addr:0x%x ",
+				s_ctrl->sensor_state,
+				s_ctrl->sensordata->slave_info.sensor_id,
+				s_ctrl->sensordata->slave_info.sensor_slave_addr);
 			goto release_mutex;
 		}
 
@@ -1753,7 +1771,7 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 
 		s_ctrl->sensor_state = CAM_SENSOR_INIT;
 		CAM_INFO(CAM_SENSOR,
-			"CAM_RELEASE_DEV Success, sensor_id:0x%x,sensor_slave_addr:0x%x",
+			"sdbg CAM_RELEASE_DEV Success, sensor_id:0x%x,sensor_slave_addr:0x%x [done]",
 			s_ctrl->sensordata->slave_info.sensor_id,
 			s_ctrl->sensordata->slave_info.sensor_slave_addr);
 		s_ctrl->streamon_count = 0;
@@ -1785,12 +1803,19 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 		break;
 	}
 	case CAM_START_DEV: {
+		CAM_INFO(CAM_SENSOR,
+			"sdbg CAM_START_DEV Called, sensor_id:0x%x,sensor_slave_addr:0x%x [start]",
+			s_ctrl->sensordata->slave_info.sensor_id,
+			s_ctrl->sensordata->slave_info.sensor_slave_addr);
+
 		if ((s_ctrl->sensor_state == CAM_SENSOR_INIT) ||
 			(s_ctrl->sensor_state == CAM_SENSOR_START)) {
 			rc = -EINVAL;
 			CAM_WARN(CAM_SENSOR,
-			"Not in right state to start : %d",
-			s_ctrl->sensor_state);
+				"sdbg Not in right state to start %d sensor_id: 0x%x sensor_slave_addr:0x%x ",
+				s_ctrl->sensor_state,
+				s_ctrl->sensordata->slave_info.sensor_id,
+				s_ctrl->sensordata->slave_info.sensor_slave_addr);
 			goto release_mutex;
 		}
 
@@ -1820,17 +1845,24 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 #endif
 		s_ctrl->sensor_state = CAM_SENSOR_START;
 		CAM_INFO(CAM_SENSOR,
-			"CAM_START_DEV Success, sensor_id:0x%x,sensor_slave_addr:0x%x",
+			"sdbg CAM_START_DEV Success, sensor_id:0x%x,sensor_slave_addr:0x%x [done]",
 			s_ctrl->sensordata->slave_info.sensor_id,
 			s_ctrl->sensordata->slave_info.sensor_slave_addr);
 	}
 		break;
 	case CAM_STOP_DEV: {
+		CAM_INFO(CAM_SENSOR,
+			"sdbg CAM_STOP_DEV Called, sensor_id:0x%x,sensor_slave_addr:0x%x [start]",
+			s_ctrl->sensordata->slave_info.sensor_id,
+			s_ctrl->sensordata->slave_info.sensor_slave_addr);
+
 		if (s_ctrl->sensor_state != CAM_SENSOR_START) {
 			rc = -EINVAL;
 			CAM_WARN(CAM_SENSOR,
-			"Not in right state to stop : %d",
-			s_ctrl->sensor_state);
+				"sdbg Not in right state to stop %d sensor_id: 0x%x sensor_slave_addr:0x%x ",
+				s_ctrl->sensor_state,
+				s_ctrl->sensordata->slave_info.sensor_id,
+				s_ctrl->sensordata->slave_info.sensor_slave_addr);
 			goto release_mutex;
 		}
 
@@ -1856,7 +1888,7 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 		s_ctrl->last_flush_req = 0;
 		s_ctrl->sensor_state = CAM_SENSOR_ACQUIRE;
 		CAM_INFO(CAM_SENSOR,
-			"CAM_STOP_DEV Success, sensor_id:0x%x,sensor_slave_addr:0x%x",
+			"sdbg CAM_STOP_DEV Success, sensor_id:0x%x,sensor_slave_addr:0x%x [done]",
 			s_ctrl->sensordata->slave_info.sensor_id,
 			s_ctrl->sensordata->slave_info.sensor_slave_addr);
 #if defined(CONFIG_CAMERA_FRS_DRAM_TEST)

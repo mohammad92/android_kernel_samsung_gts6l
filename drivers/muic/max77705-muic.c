@@ -582,7 +582,7 @@ static ssize_t max77705_muic_show_uart_sel(struct device *dev,
 	}
 
 	pr_info("%s:%s %s", MUIC_DEV_NAME, __func__, mode);
-	return sprintf(buf, mode);
+	return sprintf(buf, "%s", mode);
 }
 
 static ssize_t max77705_muic_set_uart_sel(struct device *dev,
@@ -635,7 +635,7 @@ static ssize_t max77705_muic_show_usb_sel(struct device *dev,
 	}
 
 	pr_debug("%s:%s %s", MUIC_DEV_NAME, __func__, mode);
-	return sprintf(buf, mode);
+	return sprintf(buf, "%s", mode);
 }
 
 static ssize_t max77705_muic_set_usb_sel(struct device *dev,
@@ -922,6 +922,11 @@ static ssize_t max77705_muic_set_afc_disable(struct device *dev,
 	} else {
 		pr_info("%s:%s afc_disable:%d (AFC %s)\n", MUIC_DEV_NAME, __func__,
 			pdata->afc_disable, pdata->afc_disable ? "Disabled" : "Enabled");
+
+		if (pdata->afc_disabled_updated & 0x2)
+			pdata->afc_disabled_updated |= 0x1;
+		else
+			max77705_muic_check_afc_disabled(muic_data);
 	}
 
 #if defined(CONFIG_SEC_FACTORY)
@@ -1157,6 +1162,7 @@ static int max77705_muic_handle_detach(struct max77705_muic_data *muic_data, int
 	int ret = 0;
 #if defined(CONFIG_MUIC_NOTIFIER)
 	bool noti = true;
+	int detach_attached_dev = 0;
 #endif /* CONFIG_MUIC_NOTIFIER */
 
 #if defined(CONFIG_HV_MUIC_MAX77705_AFC)
@@ -1179,6 +1185,7 @@ static int max77705_muic_handle_detach(struct max77705_muic_data *muic_data, int
 		goto out_without_noti;
 	}
 
+	muic_data->dcdtmo_retry = 0;
 #if 0
 	/* Enable Charger Detection */
 	max77705_muic_enable_chgdet(muic_data);
@@ -1193,7 +1200,7 @@ static int max77705_muic_handle_detach(struct max77705_muic_data *muic_data, int
 	case ATTACHED_DEV_AFC_CHARGER_9V_MUIC:
 	case ATTACHED_DEV_QC_CHARGER_5V_MUIC:
 	case ATTACHED_DEV_QC_CHARGER_9V_MUIC:
-		if ((muic_data->status3 & BC_STATUS_VBUSDET_MASK) > 0) {
+		if ((muic_data->status3 & BC_STATUS_VBUSDET_MASK) > 0 && !muic_data->is_irq_vbusdet_high) {
 			/* W/A for chgtype 0 irq when CC pin is only detached */
 			pr_info("%s Vbus is high, keep the current state(%d)\n", __func__,
 					muic_data->attached_dev);
@@ -1226,8 +1233,9 @@ static int max77705_muic_handle_detach(struct max77705_muic_data *muic_data, int
 
 #if defined(CONFIG_MUIC_NOTIFIER)
 	if (noti) {
-		muic_notifier_detach_attached_dev(muic_data->attached_dev);
+		detach_attached_dev = muic_data->attached_dev;
 		muic_data->attached_dev = ATTACHED_DEV_NONE_MUIC;
+		muic_notifier_detach_attached_dev(detach_attached_dev);
 	}
 #endif /* CONFIG_MUIC_NOTIFIER */
 
@@ -1242,6 +1250,7 @@ static int max77705_muic_logically_detach(struct max77705_muic_data *muic_data,
 {
 #if defined(CONFIG_MUIC_NOTIFIER)
 	bool noti = true;
+	int detach_attached_dev = 0;
 #endif /* CONFIG_MUIC_NOTIFIER */
 	bool force_path_open = true;
 	int ret = 0;
@@ -1308,8 +1317,9 @@ static int max77705_muic_logically_detach(struct max77705_muic_data *muic_data,
 
 #if defined(CONFIG_MUIC_NOTIFIER)
 	if (noti) {
-		muic_notifier_detach_attached_dev(muic_data->attached_dev);
+		detach_attached_dev = muic_data->attached_dev;
 		muic_data->attached_dev = ATTACHED_DEV_NONE_MUIC;
+		muic_notifier_detach_attached_dev(detach_attached_dev);
 	}
 #endif /* CONFIG_MUIC_NOTIFIER */
 
@@ -1434,8 +1444,8 @@ handle_attach:
 	if (logically_notify) {
 		pr_info("%s: noti\n", __func__);
 	} else {
-		muic_notifier_attach_attached_dev(new_dev);
 		muic_data->attached_dev = new_dev;
+		muic_notifier_attach_attached_dev(new_dev);
 	}
 #endif /* CONFIG_MUIC_NOTIFIER */
 
@@ -1443,10 +1453,10 @@ handle_attach:
 
 #if defined(CONFIG_HV_MUIC_MAX77705_AFC)
 	if (max77705_muic_check_is_enable_afc(muic_data, new_dev)) {
-		/* Maxim's request, wait 500ms for checking HVDCP */
-		pr_info("%s afc work after 500ms\n", __func__);
+		/* Maxim's request, wait 580ms for checking HVDCP */
+		pr_info("%s afc work after 580ms\n", __func__);
 		cancel_delayed_work_sync(&(muic_data->afc_work));
-		schedule_delayed_work(&(muic_data->afc_work), msecs_to_jiffies(500));
+		schedule_delayed_work(&(muic_data->afc_work), msecs_to_jiffies(580));
 	}
 #endif /* CONFIG_HV_MUIC_MAX77705_AFC */
 
@@ -1573,6 +1583,10 @@ static u8 max77705_resolve_chgtyp(struct max77705_muic_data *muic_data, u8 chgty
 		u8 spchgtyp, u8 dcdtmo, int irq)
 {
 	u8 ret = chgtyp;
+	u8 ccistat = 0;
+
+	max77705_read_reg(muic_data->i2c, REG_CC_STATUS0, &ccistat);
+	ccistat = (ccistat & BIT_CCIStat) >> FFS(BIT_CCIStat);
 
 #if defined(CONFIG_HICCUP_CHARGER)
 	/* Check hiccup mode */
@@ -1594,7 +1608,20 @@ static u8 max77705_resolve_chgtyp(struct max77705_muic_data *muic_data, u8 chgty
 	/* Check DCD timeout */
 	if (dcdtmo && chgtyp == CHGTYP_USB &&
 			(irq == muic_data->irq_chgtyp || irq == MUIC_IRQ_INIT_DETECT)) {
-		ret = CHGTYP_TIMEOUT_OPEN;
+		if (irq == MUIC_IRQ_INIT_DETECT) {
+			ret = CHGTYP_TIMEOUT_OPEN;
+
+			if (ccistat == CCI_500mA) {
+				ret = CHGTYP_NO_VOLTAGE;
+				muic_data->dcdtmo_retry++;
+				pr_info("%s:%s DCD_TIMEOUT retry count: %d\n",
+						MUIC_DEV_NAME, __func__,
+						muic_data->dcdtmo_retry);
+				max77705_muic_enable_chgdet(muic_data);
+			}
+		} else {
+			ret = (muic_data->dcdtmo_retry >= muic_data->bc1p2_retry_count) ? CHGTYP_TIMEOUT_OPEN : CHGTYP_NO_VOLTAGE;
+		}
 		goto out;
 	}
 
@@ -1676,6 +1703,28 @@ muic_attached_dev_t max77705_muic_check_new_dev(struct max77705_muic_data *muic_
 	return new_dev;
 }
 
+static void max77705_muic_fail_read_reg(struct max77705_muic_data *muic_data, int irq)
+{
+	int irq_index;
+
+	if (irq == muic_data->irq_uiadc)
+		irq_index = MAX77705_MUIC_IRQ_UIADC;
+	else if (irq == muic_data->irq_chgtyp)
+		irq_index = MAX77705_MUIC_IRQ_CHGTYP;
+	else if (irq == muic_data->irq_spr)
+		irq_index = MAX77705_MUIC_IRQ_SPR;
+	else if (irq == muic_data->irq_dcdtmo)
+		irq_index = MAX77705_MUIC_IRQ_DCDTMO;
+	else if (irq == muic_data->irq_vbadc)
+		irq_index = MAX77705_MUIC_IRQ_VBADC;
+	else if (irq == muic_data->irq_vbusdet)
+		irq_index = MAX77705_MUIC_IRQ_VBUSDET;
+	else
+		irq_index = MAX77705_MUIC_IRQ_UNKNOWN;
+
+	muic_data->irq_fail_count[irq_index]++;
+}
+
 static void max77705_muic_detect_dev(struct max77705_muic_data *muic_data, int irq)
 {
 	struct i2c_client *i2c = muic_data->i2c;
@@ -1687,19 +1736,35 @@ static void max77705_muic_detect_dev(struct max77705_muic_data *muic_data, int i
 	u8 status[5];
 	u8 adc, vbvolt, chgtyp, spchgtyp, sysmsg, vbadc, dcdtmo, ccstat, fakvb;
 	int ret;
+	int retry = 0;
+	int retry_count = 3;
+
 #ifdef CONFIG_USB_NOTIFY_PROC_LOG
 	int event;
 #endif
+	int detach_attached_dev;
 
-	ret = max77705_bulk_read(i2c, MAX77705_USBC_REG_USBC_STATUS1, 5, status);
-	if (ret) {
-		pr_err("%s:%s fail to read muic reg(%d)\n", MUIC_DEV_NAME,
-				__func__, ret);
+	while (retry < retry_count) {
+		ret = max77705_bulk_read(i2c,
+			MAX77705_USBC_REG_USBC_STATUS1, 5, status);
+
+		/* read completed. */
+		if (!ret)
+			break;
+
+		retry++;
+		usleep_range(10000, 10100);
+	}
+
+	/* read failed */
+	if (retry == retry_count) {
+		pr_err("%s fail to read muic reg(%d)\n", __func__, ret);
+		max77705_muic_fail_read_reg(muic_data, irq);
 		return;
 	}
 
-	pr_info("%s:%s USBC1:0x%02x, USBC2:0x%02x, BC:0x%02x\n", MUIC_DEV_NAME,
-			__func__, status[0], status[1], status[2]);
+	pr_info("%s USBC1:0x%02x, USBC2:0x%02x, BC:0x%02x, retry:%d\n",
+			__func__, status[0], status[1], status[2], retry);
 
 	/* attached status */
 	muic_data->status1 = status[0];
@@ -1748,6 +1813,11 @@ static void max77705_muic_detect_dev(struct max77705_muic_data *muic_data, int i
 		}
 	}
 
+	if (irq == muic_data->irq_dcdtmo && dcdtmo) {
+		muic_data->dcdtmo_retry++;
+		pr_info("%s:%s DCD_TIMEOUT retry count: %d\n", MUIC_DEV_NAME, __func__, muic_data->dcdtmo_retry);
+	}
+
 #if !defined(CONFIG_SEC_FACTORY)
 	/* W/A of defect cable(Vbus is valid and CC is invalid), set or cancel vbus_wa_work */
 	if (irq == muic_data->irq_vbusdet || irq == MUIC_IRQ_INIT_DETECT) {
@@ -1780,8 +1850,10 @@ static void max77705_muic_detect_dev(struct max77705_muic_data *muic_data, int i
 				if (muic_data->attached_dev != ATTACHED_DEV_NONE_MUIC) {
 					pr_info("%s initialize hiccup state and device type(%d) at hiccup booting\n",
 							__func__, muic_data->attached_dev);
-					muic_notifier_detach_attached_dev(muic_data->attached_dev);
+					detach_attached_dev = muic_data->attached_dev;
 					muic_data->attached_dev = ATTACHED_DEV_NONE_MUIC;
+					muic_notifier_detach_attached_dev(detach_attached_dev);
+
 					com_to_open(muic_data);
 				}
 			}
@@ -1794,6 +1866,10 @@ static void max77705_muic_detect_dev(struct max77705_muic_data *muic_data, int i
 #endif /* CONFIG_HICCUP_CHARGER */
 	}
 #endif /* CONFIG_MUIC_MAX77705_CCIC */
+	if (irq == muic_data->irq_vbusdet && vbvolt) {
+		pr_info("%s:%s irq is vbusdet && Vbus is high\n", MUIC_DEV_NAME, __func__);
+		muic_data->is_irq_vbusdet_high = true;
+	}
 	new_dev = max77705_muic_check_new_dev(muic_data, &intr, irq);
 
 	if (intr == MUIC_INTR_ATTACH) {
@@ -1815,6 +1891,7 @@ static void max77705_muic_detect_dev(struct max77705_muic_data *muic_data, int i
 #if defined(CONFIG_VBUS_NOTIFIER)
 	max77705_muic_handle_vbus(muic_data);
 #endif
+	muic_data->is_irq_vbusdet_high = false;
 }
 
 static irqreturn_t max77705_muic_irq(int irq, void *data)
@@ -1862,9 +1939,17 @@ static void max77705_muic_afc_work(struct work_struct *work)
 	pr_info("%s:%s\n", MUIC_DEV_NAME, __func__);
 
 	if (max77705_muic_check_is_enable_afc(muic_data, muic_data->attached_dev)) {
-		muic_data->is_check_hv = true;
-		muic_data->hv_voltage = 9;
-		max77705_muic_afc_hv_set(muic_data, 9);
+		muic_data->pdata->afc_disabled_updated |= 0x2;
+
+		if (!muic_data->pdata->afc_disable) {
+			muic_data->is_check_hv = true;
+			muic_data->hv_voltage = 9;
+			max77705_muic_afc_hv_set(muic_data, 9);
+		} else {
+			muic_data->is_check_hv = true;
+			muic_data->hv_voltage = 5;
+			max77705_muic_afc_hv_set(muic_data, 5);
+		}
 	}
 }
 
@@ -2045,6 +2130,14 @@ static void max77705_muic_print_reg_log(struct work_struct *work)
 	pr_info("%s:%s CC_STATUS0:0x%x, CC_STATUS1:0x%x, PD_STATUS0:0x%x, PD_STATUS1:0x%x, WDT:%d, POR:%d\n",
 		MUIC_DEV_NAME, __func__, status[4], status[5], status[6], status[7],
 		muic_data->usbc_pdata->watchdog_count, muic_data->usbc_pdata->por_count);
+	pr_info("%s fail to read uiadc(%d), chgtyp(%d), spr(%d), dcdtmo(%d), vbadc(%d), vbusdet(%d), unknown(%d)\n",
+		__func__, muic_data->irq_fail_count[MAX77705_MUIC_IRQ_UIADC],
+			muic_data->irq_fail_count[MAX77705_MUIC_IRQ_CHGTYP],
+			muic_data->irq_fail_count[MAX77705_MUIC_IRQ_SPR],
+			muic_data->irq_fail_count[MAX77705_MUIC_IRQ_DCDTMO],
+			muic_data->irq_fail_count[MAX77705_MUIC_IRQ_VBADC],
+			muic_data->irq_fail_count[MAX77705_MUIC_IRQ_VBUSDET],
+			muic_data->irq_fail_count[MAX77705_MUIC_IRQ_UNKNOWN]);
 
 	schedule_delayed_work(&(muic_data->debug_work), msecs_to_jiffies(60000));
 }
@@ -2174,6 +2267,22 @@ static void max77705_muic_init_detect(struct max77705_muic_data *muic_data)
 	max77705_muic_enable_detecting_short(muic_data);
 
 	mutex_unlock(&muic_data->muic_mutex);
+}
+
+static void max77705_set_bc1p2_retry_count(struct max77705_muic_data *muic_data)
+{
+	struct device_node *np = NULL;
+	int count;
+
+	np = of_find_compatible_node(NULL, NULL, "maxim,max77705");
+	
+	if (np && !of_property_read_u32(np, "max77705,bc1p2_retry_count", &count))
+		muic_data->bc1p2_retry_count = count;
+	else
+		muic_data->bc1p2_retry_count = 1; /* default retry count */
+
+	pr_info("%s:%s BC1p2 Retry count: %d\n", MUIC_DEV_NAME,
+				__func__, muic_data->bc1p2_retry_count);
 }
 
 #if defined(CONFIG_OF)
@@ -2368,6 +2477,8 @@ int max77705_muic_probe(struct max77705_usbc_platform_data *usbc_data)
 	muic_data->is_factory_start = false;
 	muic_data->switch_val = COM_OPEN;
 	muic_data->is_charger_mode = false;
+	muic_data->dcdtmo_retry = 0;
+	muic_data->is_irq_vbusdet_high = false;
 
 	usbc_data->muic_data = muic_data;
 	g_muic_data = muic_data;
@@ -2444,6 +2555,8 @@ int max77705_muic_probe(struct max77705_usbc_platform_data *usbc_data)
 #endif
 
 #if defined(CONFIG_HV_MUIC_MAX77705_AFC)
+	muic_data->pdata->afc_disabled_updated = 0;
+
 	INIT_DELAYED_WORK(&(muic_data->afc_work),
 		max77705_muic_afc_work);
 	INIT_WORK(&(muic_data->afc_handle_work),
@@ -2467,6 +2580,9 @@ int max77705_muic_probe(struct max77705_usbc_platform_data *usbc_data)
 #endif
 	/* initial cable detection */
 	max77705_muic_init_detect(muic_data);
+
+	/* set bc1p2 retry count */	
+	max77705_set_bc1p2_retry_count(muic_data);
 
 	/* register usb external notifier */
 	muic_register_usb_notifier(muic_data);

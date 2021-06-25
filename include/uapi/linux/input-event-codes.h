@@ -703,6 +703,10 @@
 #define BTN_TRIGGER_HAPPY39		0x2e6
 #define BTN_TRIGGER_HAPPY40		0x2e7
 
+#define BTN_HOTKEY_APP1 		0x2f5
+#define BTN_HOTKEY_APP2 		0x2f6
+#define BTN_HOTKEY_APP3 		0x2f7
+
 /* Custom fingerprint gestures keys */
 #define KEY_FP_GESTURE_UP		0x2e8
 #define KEY_FP_GESTURE_DOWN		0x2e9
@@ -828,6 +832,7 @@
 #define SW_MICROPHONE2_INSERT	0x12  /* set = inserted */
 #define SW_UNSUPPORT_INSERT	0x13  /* set = unsupported device inserted */
 #define SW_PEN_INSERT		0x13  /* set = pen insert, remove */
+#define SW_MACHINE_COVER	0x14  /* set = cover closed */
 #define SW_GLOVE		0x20  /* set = glove mode */
 #define SW_MAX			0x20
 #define SW_CNT			(SW_MAX+1)

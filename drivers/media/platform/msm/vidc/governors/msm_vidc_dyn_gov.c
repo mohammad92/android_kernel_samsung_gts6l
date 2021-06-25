@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -608,9 +608,9 @@ static unsigned long __calculate_encoder(struct vidc_bus_vote_data *d,
 	/* Encoder Parameters */
 	int width, height, fps, lcu_size, bitrate, lcu_per_frame,
 		collocated_bytes_per_lcu, tnbr_per_lcu, dpb_bpp,
-		original_color_format, vertical_tile_width;
+		original_color_format, vertical_tile_width, rotation;
 	bool work_mode_1, original_compression_enabled,
-		low_power, rotation, cropping_or_scaling,
+		low_power, cropping_or_scaling,
 		b_frames_enabled = false,
 		llc_ref_chroma_cache_enabled = false,
 		llc_top_line_buf_enabled = false,
@@ -920,6 +920,7 @@ static int __get_target_freq(struct devfreq *dev, unsigned long *freq)
 	struct devfreq_dev_status stats = {0};
 	struct msm_vidc_gov_data *vidc_data = NULL;
 	struct governor *gov = NULL;
+	static int boost = 1;
 
 	if (!dev || !freq)
 		return -EINVAL;
@@ -929,10 +930,16 @@ static int __get_target_freq(struct devfreq *dev, unsigned long *freq)
 	dev->profile->get_dev_status(dev->dev.parent, &stats);
 	vidc_data = (struct msm_vidc_gov_data *)stats.private_data;
 
-	if (!vidc_data || !vidc_data->data_count)
+	if (!vidc_data || !vidc_data->data_count) {
+		boost = 1;
 		goto exit;
+	}
 
 	for (c = 0; c < vidc_data->data_count; ++c) {
+		if (vidc_data->data[c].input_width  >= 7680 && 
+			vidc_data->data[c].input_height >= 4320 &&
+			vidc_data->data[c].bitrate > 220000000L)
+			boost = 3;
 		if (vidc_data->data->power_mode == VIDC_POWER_TURBO) {
 			ab_kbps = INT_MAX;
 			goto exit;
@@ -941,6 +948,7 @@ static int __get_target_freq(struct devfreq *dev, unsigned long *freq)
 
 	for (c = 0; c < vidc_data->data_count; ++c)
 		ab_kbps += __calculate(&vidc_data->data[c], gov->mode);
+	ab_kbps *= boost;
 
 exit:
 	*freq = clamp(ab_kbps, dev->min_freq, dev->max_freq ?: UINT_MAX);
@@ -958,8 +966,6 @@ static int __event_handler(struct devfreq *devfreq, unsigned int event,
 
 	switch (event) {
 	case DEVFREQ_GOV_START:
-	case DEVFREQ_GOV_RESUME:
-	case DEVFREQ_GOV_SUSPEND:
 		mutex_lock(&devfreq->lock);
 		rc = update_devfreq(devfreq);
 		mutex_unlock(&devfreq->lock);

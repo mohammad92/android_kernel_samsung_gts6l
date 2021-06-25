@@ -45,6 +45,12 @@
 #ifdef CONFIG_SEC_DEBUG
 #include <linux/sec_debug.h>
 #endif
+#elif defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+#include "sde_encoder.h"
+#include "../samsung_lego/ss_dsi_panel_common.h"
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
 #endif
 
 #define SDE_DEBUG_PLANE(pl, fmt, ...) SDE_DEBUG("plane%d " fmt,\
@@ -917,7 +923,7 @@ int sde_plane_wait_input_fence(struct drm_plane *plane, uint32_t wait_ms)
 						wait_ms, prefix);
 				psde->is_error = true;
 				sde_kms_timeline_status(plane->dev);
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 				{
 					struct dma_fence *tout_fence = input_fence;
 
@@ -3602,7 +3608,7 @@ static int _sde_plane_validate_scaler_v2(struct sde_plane *psde,
 }
 
 static int _sde_plane_validate_shared_crtc(struct sde_plane *psde,
-	struct drm_plane_state *state)
+				struct drm_plane_state *state)
 {
 	struct sde_kms *sde_kms;
 	struct sde_splash_display *splash_display;
@@ -3622,9 +3628,12 @@ static int _sde_plane_validate_shared_crtc(struct sde_plane *psde,
 
 			for (j = 0; j < MAX_DATA_PATH_PER_DSIPLAY; j++) {
 
-				if (splash_display->pipes[j].sspp == psde->pipe) {
-					SDE_DEBUG_PLANE(psde,"pipe:%d used in cont-splash on crtc:%d\n",
-						psde->pipe, splash_display->encoder->crtc->base.id);
+				if (splash_display->pipes[j].sspp ==
+						psde->pipe) {
+					SDE_ERROR_PLANE(psde,
+					"pipe:%d used in cont-splash on crtc:%d\n",
+					psde->pipe,
+					splash_display->encoder->crtc->base.id);
 					return -EINVAL;
 				}
 			}
@@ -3632,6 +3641,7 @@ static int _sde_plane_validate_shared_crtc(struct sde_plane *psde,
 	}
 
 	return 0;
+
 }
 
 static int sde_plane_sspp_atomic_check(struct drm_plane *plane,
@@ -3854,7 +3864,7 @@ void sde_plane_flush(struct drm_plane *plane)
 {
 	struct sde_plane *psde;
 	struct sde_plane_state *pstate;
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	struct samsung_display_driver_data *vdd;
 #endif
 
@@ -3879,7 +3889,7 @@ void sde_plane_flush(struct drm_plane *plane)
 	else if (psde->pipe_hw && psde->csc_ptr && psde->pipe_hw->ops.setup_csc)
 		psde->pipe_hw->ops.setup_csc(psde->pipe_hw, psde->csc_ptr);
 	
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	if (plane->crtc) {
 		vdd = ss_get_vdd(plane->crtc->index);
 		if (vdd && vdd->force_white_flush) {

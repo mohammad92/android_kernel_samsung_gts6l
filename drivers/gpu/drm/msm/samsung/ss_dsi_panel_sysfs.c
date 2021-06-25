@@ -4111,6 +4111,16 @@ static ssize_t ss_window_color_show(struct device *dev,
 		(struct samsung_display_driver_data *)dev_get_drvdata(dev);
 	char color[2];
 	int ret = 0;
+	int i = 0;
+	int support_window_color = 0;
+
+	for (i = PRIMARY_DISPLAY_NDX; i < MAX_DISPLAY_NDX; i++) {
+		vdd = ss_get_vdd(i);
+		if(vdd->support_window_color)
+			support_window_color = 1;
+	}
+	if (!support_window_color)
+		return snprintf(buf, 20, "00\n");
 
 	if (!sec_get_param(param_index_window_color, color)) {
 		LCD_ERR("%s : fail to sec_get_param..\n");

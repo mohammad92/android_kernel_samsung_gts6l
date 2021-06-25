@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -53,7 +53,7 @@
 #define CREATE_TRACE_POINTS
 #include "sde_trace.h"
 
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 #include <linux/sec_debug.h>
 #endif
 
@@ -837,14 +837,12 @@ static int _sde_kms_release_splash_buffer(unsigned int mem_addr,
 		return -EINVAL;
 	}
 
-#if defined(CONFIG_DISPLAY_SAMSUNG) && defined(CONFIG_SEC_DEBUG)
+#if (defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO))  && defined(CONFIG_SEC_DEBUG)
 	if (sec_debug_is_enabled()) {
 		pr_info("skip to free splash memory\n");
 		return 0;
 	}
-#endif
-
-#if !defined(CONFIG_DISPLAY_SAMSUNG)
+#else
 	/* leave ramdump memory only if base address matches */
 	if (ramdump_base == mem_addr &&
 			ramdump_buffer_size <= splash_buffer_size) {
@@ -863,6 +861,11 @@ static int _sde_kms_release_splash_buffer(unsigned int mem_addr,
 	free_memsize_reserved(mem_addr, splash_buffer_size);
 	for (pfn_idx = pfn_start; pfn_idx < pfn_end; pfn_idx++)
 		free_reserved_page(pfn_to_page(pfn_idx));
+
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+	SDE_INFO("release splash buffer: addr: %x, size: %x, sec_debug: %d\n",
+			mem_addr, splash_buffer_size, sec_debug_is_enabled());
+#endif
 
 	return ret;
 
@@ -1371,9 +1374,15 @@ static void _sde_kms_release_displays(struct sde_kms *sde_kms)
 	sde_kms->wb_displays = NULL;
 	sde_kms->wb_display_count = 0;
 
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+	sde_kms->dsi_display_count = 0;
+	kfree(sde_kms->dsi_displays);
+	sde_kms->dsi_displays = NULL;
+#else
 	kfree(sde_kms->dsi_displays);
 	sde_kms->dsi_displays = NULL;
 	sde_kms->dsi_display_count = 0;
+#endif
 }
 
 // KR :  No sde_kms_check_status_init ??
@@ -1428,6 +1437,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 		.get_panel_vfp = NULL,
 	};
 	static const struct sde_connector_ops dp_ops = {
+		.set_info_blob = dp_connnector_set_info_blob,
 		.post_init  = dp_connector_post_init,
 		.detect     = dp_connector_detect,
 		.get_modes  = dp_connector_get_modes,
@@ -1605,7 +1615,8 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 		/* update display cap to MST_MODE for DP MST encoders */
 		info.capabilities |= MSM_DISPLAY_CAP_MST_MODE;
 		sde_kms->dp_stream_count = dp_display_get_num_of_streams();
-		for (idx = 0; idx < sde_kms->dp_stream_count; idx++) {
+		for (idx = 0; idx < sde_kms->dp_stream_count &&
+			priv->num_encoders < max_encoders; idx++) {
 			info.h_tile_instance[0] = idx;
 			encoder = sde_encoder_init(dev, &info);
 			if (IS_ERR_OR_NULL(encoder)) {
@@ -1698,7 +1709,12 @@ static int _sde_kms_drm_obj_init(struct sde_kms *sde_kms)
 	if (!_sde_kms_get_displays(sde_kms))
 		(void)_sde_kms_setup_displays(dev, priv, sde_kms);
 
-	max_crtc_count = min(catalog->mixer_count, priv->num_encoders);
+	/* Follow user setting if preferred crtc number is set */
+	if (!of_property_read_u32(dev->dev->of_node,
+			"qcom,sde-crtc-num-pref", &max_crtc_count))
+		max_crtc_count = min(max_crtc_count, MAX_CRTCS);
+	else
+		max_crtc_count = min(catalog->mixer_count, priv->num_encoders);
 
 	/* Create the planes */
 	for (i = 0; i < catalog->sspp_count; i++) {
@@ -1812,6 +1828,11 @@ void sde_kms_timeline_status(struct drm_device *dev)
 	mutex_unlock(&dev->mode_config.mutex);
 }
 
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+int sde_core_perf_sysfs_init(struct sde_kms *sde_kms);
+int sde_core_perf_sysfs_deinit(struct sde_kms *sde_kms);
+#endif
+
 static int sde_kms_postinit(struct msm_kms *kms)
 {
 	struct sde_kms *sde_kms = to_sde_kms(kms);
@@ -1829,6 +1850,12 @@ static int sde_kms_postinit(struct msm_kms *kms)
 	rc = _sde_debugfs_init(sde_kms);
 	if (rc)
 		SDE_ERROR("sde_debugfs init failed: %d\n", rc);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+	rc = sde_core_perf_sysfs_init(sde_kms);
+	if (rc)
+		SDE_ERROR("sde_core_sysfs init failed: %d\n", rc);
+#endif
 
 	drm_for_each_crtc(crtc, dev)
 		sde_crtc_post_init(dev, crtc);
@@ -1881,6 +1908,9 @@ static void _sde_kms_hw_destroy(struct sde_kms *sde_kms,
 	/* safe to call these more than once during shutdown */
 	_sde_debugfs_destroy(sde_kms);
 	_sde_kms_mmu_destroy(sde_kms);
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+	sde_core_perf_sysfs_deinit(sde_kms);
+#endif
 
 	if (sde_kms->catalog) {
 		for (i = 0; i < sde_kms->catalog->vbif_count; i++) {
@@ -2701,8 +2731,15 @@ static int sde_kms_get_mixer_count(const struct msm_kms *kms,
 	mode_clock_hz = drm_fixp_mul(temp, mdp_fudge_factor);
 
 	if (mode_clock_hz > max_mdp_clock_hz ||
-			mode->hdisplay > max_mixer_width)
+			mode->hdisplay > max_mixer_width) {
 		*num_lm = 2;
+		if ((mode_clock_hz >> 1) > max_mdp_clock_hz) {
+			SDE_ERROR("[%s] clock %d exceeds max_mdp_clk %d\n",
+					mode->name, mode_clock_hz,
+					max_mdp_clock_hz);
+			return -EINVAL;
+		}
+	}
 
 	SDE_DEBUG("[%s] h=%d, v=%d, fps%d, max_mdp_pclk_hz=%llu, num_lm=%d\n",
 			mode->name, mode->htotal, mode->vtotal, mode->vrefresh,
@@ -2991,7 +3028,7 @@ end:
 	return 0;
 }
 
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 extern int ss_dsi_panel_event_handler(
 		int display_ndx, enum mdss_intf_events event, void *arg);
 #endif
@@ -3027,7 +3064,7 @@ static const struct msm_kms_funcs kms_funcs = {
 	.check_for_splash = sde_kms_check_for_splash,
 	.get_mixer_count = sde_kms_get_mixer_count,
 
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	.ss_callback	= ss_dsi_panel_event_handler,
 #endif
 };

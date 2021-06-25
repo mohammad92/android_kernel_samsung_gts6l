@@ -2,6 +2,7 @@ ccflags-y := -Iinclude/drm -Idrivers/gpu/drm/msm -Idrivers/gpu/drm/msm/dsi-stagi
 ccflags-$(CONFIG_DRM_MSM_DSI) += -Idrivers/gpu/drm/msm/dsi
 ccflags-y += -Idrivers/gpu/drm/msm/sde
 ccflags-$(CONFIG_DISPLAY_SAMSUNG) += -Idrivers/gpu/drm/msm/samsung
+ccflags-$(CONFIG_DISPLAY_SAMSUNG_LEGO) += -Idrivers/gpu/drm/msm/samsung_lego
 
 obj-$(CONFIG_QCOM_MDSS_PLL) += mdss-pll-util.o
 obj-$(CONFIG_QCOM_MDSS_PLL) += mdss-pll.o
@@ -17,3 +18,5 @@ obj-$(CONFIG_QCOM_MDSS_PLL) += mdss-dsi-pll-14nm.o
 obj-$(CONFIG_QCOM_MDSS_PLL) += mdss-dsi-pll-14nm-util.o
 obj-$(CONFIG_QCOM_MDSS_PLL) += mdss-dp-pll-14nm.o
 obj-$(CONFIG_QCOM_MDSS_PLL) += mdss-hdmi-pll-28lpm.o
+obj-$(CONFIG_QCOM_MDSS_PLL) += mdss-dsi-pll-12nm.o
+obj-$(CONFIG_QCOM_MDSS_PLL) += mdss-dsi-pll-12nm-util.o

@@ -23,8 +23,8 @@
 
 #include "sde_hdcp_2x.h"
 
-#ifdef CONFIG_SEC_DISPLAYPORT
-#include "secdp.h"
+#ifdef CONFIG_SEC_DISPLAYPORT_ENG
+#include <linux/secdp_logger.h>
 #endif
 
 #define DP_INTR_STATUS2				(0x00000024)

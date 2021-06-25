@@ -36,8 +36,7 @@
 #define SEC_FS_DERIVED_KEY_INPUT_SIZE SEC_FS_MASTER_KEY_SIZE+FS_KEY_DERIVATION_NONCE_SIZE+SEC_FS_ENCRYPION_MODE_SIZE
 #define SEC_FS_DERIVED_KEY_OUTPUT_SIZE 64
 
-int fscrypt_sec_get_key_aes(const u8 *master_key, const struct fscrypt_context *ctx,
-										u8 *derived_key, unsigned int derived_keysize, u8 *iv_key);
+int fscrypt_sec_get_key_aes(struct fscrypt_info *ci, const u8 *master_key, u8 *iv_key, u8 *derived_key);
 int fscrypt_sec_set_key_aes(char *raw_key);
 int __init fscrypt_sec_crypto_init(void);
 void __exit fscrypt_sec_crypto_exit(void);

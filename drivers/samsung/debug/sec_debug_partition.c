@@ -75,7 +75,7 @@ static void debug_partition_operation(struct work_struct *work)
 	}
 
 	fs = get_fs();
-	set_fs(get_ds());
+	set_fs(KERNEL_DS);
 
 	sched_data->error = 0;
 
@@ -127,7 +127,7 @@ static void ap_health_work_write_fn(struct work_struct *work)
 	}
 
 	fs = get_fs();
-	set_fs(get_ds());
+	set_fs(KERNEL_DS);
 
 	filp = filp_open(debugpartition_path, (O_RDWR | O_SYNC), 0);
 	if (IS_ERR(filp)) {
@@ -178,7 +178,7 @@ static bool init_lcd_debug_data(void)
 
 	memset((void *)&lcd_debug, 0, sizeof(struct lcd_debug_t));
 
-	pr_info("lcd_debug size[%ld]\n", sizeof(struct lcd_debug_t));
+	pr_info("lcd_debug size[%zu]\n", sizeof(struct lcd_debug_t));
 
 	do {
 		if (retry++) {
@@ -439,6 +439,18 @@ bool write_debug_partition(enum debug_partition_index index, void *value)
 			sched_debug_data.value = value;
 			sched_debug_data.offset = SEC_DEBUG_RESET_KLOG_OFFSET;
 			sched_debug_data.size = SEC_DEBUG_RESET_KLOG_SIZE;
+			sched_debug_data.direction = PARTITION_WR;
+			schedule_work(&sched_debug_data.debug_partition_work);
+			wait_for_completion(&sched_debug_data.work);
+			mutex_unlock(&debug_partition_mutex);
+			break;
+#endif
+#if IS_ENABLED(CONFIG_SEC_LOG_STORE_LPM_KMSG)
+		case debug_index_reset_lpm_klog:
+			mutex_lock(&debug_partition_mutex);
+			sched_debug_data.value = value;
+			sched_debug_data.offset = SEC_DEBUG_RESET_LPM_KLOG_OFFSET;
+			sched_debug_data.size = SEC_DEBUG_RESET_LPM_KLOG_SIZE;
 			sched_debug_data.direction = PARTITION_WR;
 			schedule_work(&sched_debug_data.debug_partition_work);
 			wait_for_completion(&sched_debug_data.work);

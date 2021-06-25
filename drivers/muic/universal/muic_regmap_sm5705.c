@@ -549,6 +549,7 @@ static int chgtype_sm_to_maxim(int chgtyp)
 	case 0x01: // DCP
 	case 0x10: // U200
 	case 0x11: // AFC
+	case 0x12: // LO TA
 	case 0x13: // QC2.0
 		ret = CHGTYP_DEDICATED_CHARGER;
 		break;
@@ -951,6 +952,8 @@ static int sm5705_afc_ta_attach(struct regmap_desc *pdesc)
 	if (pmuic->pdata->afc_disable) {
 		pr_info("%s:%s AFC is disabled in settings menu\n",
 						MUIC_DEV_NAME, __func__);
+		pmuic->legacy_dev = pmuic->attached_dev = ATTACHED_DEV_AFC_CHARGER_DISABLED_MUIC;
+		muic_notifier_attach_attached_dev(ATTACHED_DEV_AFC_CHARGER_DISABLED_MUIC);
 		return 0;
 	}
 

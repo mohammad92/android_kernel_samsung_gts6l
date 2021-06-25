@@ -169,6 +169,7 @@ static bool mdev_is_supported(int mdev)
 	case ATTACHED_DEV_JIG_USB_OFF_MUIC:
 	case ATTACHED_DEV_JIG_USB_ON_MUIC:
 	case ATTACHED_DEV_OTG_MUIC:
+	case ATTACHED_DEV_AFC_CHARGER_DISABLED_MUIC:
 	case ATTACHED_DEV_AFC_CHARGER_5V_MUIC:
 	case ATTACHED_DEV_AFC_CHARGER_9V_MUIC:
 	case ATTACHED_DEV_AFC_CHARGER_12V_MUIC:
@@ -534,7 +535,7 @@ static int muic_handle_ccic_ATTACH(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *p
 			pdesc->ccic_evt_rprd = 1;
 			if (pvendor && pvendor->enable_chgdet)
 				pvendor->enable_chgdet(pmuic->regmapdesc, 0);
-			pdesc->mdev = ATTACHED_DEV_OTG_MUIC;
+			pdesc->mdev = pmuic->attached_dev = ATTACHED_DEV_OTG_MUIC;
 			mdev_com_to(pmuic, MUIC_PATH_USB_AP);
 			mdev_noti_attached(pdesc->mdev);
 			return 0;

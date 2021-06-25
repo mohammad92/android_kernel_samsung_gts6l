@@ -18,6 +18,7 @@ struct cs40l2x_platform_data {
 	unsigned int boost_ipk;
 	unsigned int boost_ctl;
 	unsigned int boost_ovp;
+	unsigned int boost_clab;
 	bool refclk_gpio2;
 	unsigned int f0_default;
 	unsigned int f0_min;

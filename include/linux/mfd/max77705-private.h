@@ -126,6 +126,7 @@ enum max77705_fuelgauge_reg {
 	QRTABLE20_REG				= 0x32,
 	FULLCAP_REP_REG				= 0x35,
 	RCOMP_REG				= 0x38,
+	TEMPCO_REG				= 0x39,
 	VEMPTY_REG				= 0x3A,
 	FSTAT_REG				= 0x3D,
 	DISCHARGE_THRESHOLD_REG			= 0x40,
@@ -385,6 +386,12 @@ struct max77705_dev {
 	int doing_irq;
 	int is_usbc_queue;
 
+	int enable_nested_irq;    
+	u8 usbc_irq;
+
+	void (*check_pdmsg)(void *data, u8 pdmsg);
+	void *usbc_data;
+
 	struct max77705_platform_data *pdata;
 };
 
@@ -415,5 +422,7 @@ extern bool is_muic_usb_path_cp_usb(void);
 extern void max77705_hv_muic_charger_init(void);
 extern int max77705_usbc_fw_update(struct max77705_dev *max77705, const u8 *fw_bin, int fw_bin_len, int enforce_do);
 extern void max77705_usbc_fw_setting(struct max77705_dev *max77705, int enforce_do);
+extern void max77705_register_pdmsg_func(struct max77705_dev *max77705,
+	void (*check_pdmsg)(void *, u8), void *data);
 #endif /* __LINUX_MFD_MAX77705_PRIV_H */
 

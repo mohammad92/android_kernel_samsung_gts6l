@@ -114,7 +114,7 @@
  * Printing one warning message in 5 seconds if multiple warning messages
  * are coming back to back.
  */
-
+#ifdef CONFIG_IPA_DEBUG
 #define WARN_ON_RATELIMIT_IPA(condition)				\
 ({								\
 	static DEFINE_RATELIMIT_STATE(_rs,			\
@@ -125,7 +125,9 @@
 	if (unlikely(rtn && __ratelimit(&_rs)))			\
 		WARN_ON(rtn);					\
 })
-
+#else
+#define WARN_ON_RATELIMIT_IPA(condition)
+#endif
 /*
  * Printing one error message in 5 seconds if multiple error messages
  * are coming back to back.
@@ -383,7 +385,8 @@ int ipa_mhi_start_channel_internal(enum ipa_client_type client);
 bool ipa_mhi_sps_channel_empty(enum ipa_client_type client);
 int ipa_mhi_resume_channels_internal(enum ipa_client_type client,
 		bool LPTransitionRejected, bool brstmode_enabled,
-		union __packed gsi_channel_scratch ch_scratch, u8 index);
+		union __packed gsi_channel_scratch ch_scratch, u8 index,
+		bool is_switch_to_dbmode);
 int ipa_mhi_handle_ipa_config_req(struct ipa_config_req_msg_v01 *config_req);
 int ipa_mhi_query_ch_info(enum ipa_client_type client,
 		struct gsi_chan_info *ch_info);

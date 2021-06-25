@@ -26,6 +26,7 @@ enum debug_partition_index {
 	debug_index_auto_comment,
 	debug_index_reset_history,
 	debug_index_reset_rkplog,
+	debug_index_reset_lpm_klog,
 	debug_index_max,
 };
 
@@ -49,6 +50,8 @@ typedef struct {
 	struct edac_cnt edac[NR_CPUS][2]; // L1, L2
 	struct edac_cnt edac_l3; // L3
 	uint32_t edac_bus_cnt;
+	struct edac_cnt edac_llcc_data_ram; // LLCC Data RAM
+	struct edac_cnt edac_llcc_tag_ram; // LLCC Tag RAM
 } cache_health_t;
 
 typedef struct {
@@ -75,9 +78,10 @@ enum {
 	L3,
 	PWR_CLUSTER,
 	PERF_CLUSTER,
+	PRIME_CLUSTER,
 };
 
-#define MAX_CLUSTER_NUM 3
+#define MAX_CLUSTER_NUM 4
 #define CPU_NUM_PER_CLUSTER 4
 #define MAX_VREG_CNT 3
 #define MAX_BATT_DCVS 10
@@ -141,8 +145,19 @@ struct lcd_debug_ftout {
 	char name[MAX_FTOUT_NAME];
 };
 
+#define FW_UP_MAX_RETRY 20
+struct lcd_debug_fw_up {
+	uint32_t try_count;
+	uint32_t pass_count;
+	uint32_t fail_line_count;
+	uint32_t fail_line[FW_UP_MAX_RETRY];
+	uint32_t fail_count;
+	uint32_t fail_address[FW_UP_MAX_RETRY];
+};
+
 struct lcd_debug_t {
 	struct lcd_debug_ftout ftout;
+	struct lcd_debug_fw_up fw_up;
 };
 
 #define DEBUG_PARTITION_MAGIC	0x41114729
@@ -184,6 +199,9 @@ struct lcd_debug_t {
 
 #define SEC_DEBUG_RESET_ETRM_SIZE		(0x3c0)
 #define SEC_DEBUG_RESET_ETRM_OFFSET		(SEC_DEBUG_AUTO_COMMENT_OFFSET + ALIGN(SEC_DEBUG_AUTO_COMMENT_SIZE, SECTOR_UNIT_SIZE) - 0x15)	/* 5MB + 16KB + 4KB */
+
+#define SEC_DEBUG_RESET_LPM_KLOG_OFFSET		(6 * 1024 * 1024)
+#define SEC_DEBUG_RESET_LPM_KLOG_SIZE		(0x200000)		/* 2MB */
 
 enum {
 	DBG_PART_DRV_INIT_DONE,

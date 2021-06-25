@@ -50,13 +50,39 @@ static inline char *secdp_utcmd_to_str(u32 cmd_type)
 	}
 }
 
+/** check if buf has range('-') format
+ * @buf		buf to be checked
+ * @size	buf size
+ * @retval	0 if args are ok, -1 if '-' included
+ */
+static int secdp_check_store_args(const char *buf, size_t size)
+{
+	int ret;
+
+	if (strnchr(buf, size, '-')) {
+		pr_err("range is forbidden!\n");
+		ret = -1;
+		goto exit;
+	}
+
+	ret = 0;
+exit:
+	return ret;
+}
+
+#ifdef CONFIG_SEC_FACTORY
 static ssize_t dp_sbu_sw_sel_store(struct class *dev,
 				struct class_attribute *attr, const char *buf, size_t size)
 {
 	int val[10] = {0,};
 	int sbu_sw_sel, sbu_sw_oe;
 
-	get_options(buf, 10, val);
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto exit;
+	}
+
+	get_options(buf, ARRAY_SIZE(val), val);
 
 	sbu_sw_sel = val[1];
 	sbu_sw_oe = val[2];
@@ -69,49 +95,12 @@ static ssize_t dp_sbu_sw_sel_store(struct class *dev,
 	else
 		pr_err("unknown sbu_sw_oe value: %d\n", sbu_sw_oe);
 
+exit:
 	return size;
 }
 
 static CLASS_ATTR_WO(dp_sbu_sw_sel);
-
-static ssize_t dp_forced_resolution_show(struct class *class,
-				struct class_attribute *attr, char *buf)
-{
-	int rc = 0;
-	int vic = 1;
-
-	if (forced_resolution) {
-		rc = scnprintf(buf, PAGE_SIZE,
-			"%d : %s\n", forced_resolution,
-			secdp_vic_to_string(forced_resolution));
-
-	} else {
-		while (secdp_vic_to_string(vic) != NULL) {
-			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
-					"%d : %s\n", vic, secdp_vic_to_string(vic));
-			vic++;
-		}
-	}
-
-	return rc;
-}
-
-static ssize_t dp_forced_resolution_store(struct class *dev,
-				struct class_attribute *attr, const char *buf, size_t size)
-{
-	int val[10] = {0, };
-
-	get_options(buf, 10, val);
-
-	if (val[1] <= 0)
-		forced_resolution = 0;
-	else
-		forced_resolution = val[1];
-
-	return size;
-}
-
-static CLASS_ATTR_RW(dp_forced_resolution);
+#endif
 
 static ssize_t dex_show(struct class *class,
 				struct class_attribute *attr, char *buf)
@@ -123,24 +112,31 @@ static ssize_t dex_show(struct class *class,
 	if (!secdp_get_cable_status() || !secdp_get_hpd_status() ||
 			secdp_get_poor_connection_status() || !secdp_get_link_train_status()) {
 		pr_info("cable is out\n");
-		dex->prev = dex->curr = DEX_DISABLED;
+		dex->prev = dex->curr = dex->dex_node_status = DEX_DISABLED;
 	}
 
-	pr_info("prev: %d, curr: %d\n", dex->prev, dex->curr);
-	rc = scnprintf(buf, PAGE_SIZE, "%d\n", dex->curr);
+	pr_info("prev: %d, curr: %d, dex_node_status: %d\n", dex->prev, dex->curr, dex->dex_node_status);
+	rc = scnprintf(buf, PAGE_SIZE, "%d\n", dex->dex_node_status);
 
-	if (dex->curr == DEX_DURING_MODE_CHANGE)
-		dex->curr = DEX_ENABLED;
+	if (dex->dex_node_status == DEX_DURING_MODE_CHANGE)
+		dex->dex_node_status = dex->curr;
 
 	return rc;
 }
 
+/*
+ * assume that 1 HMD device has name(14),vid(4),pid(4) each, then
+ * max 32 HMD devices(name,vid,pid) need 806 bytes including TAG, NUM, comba
+ */
+#define MAX_DEX_STORE_LEN	1024
+
 static ssize_t dex_store(struct class *class,
 		struct class_attribute *attr, const char *buf, size_t size)
 {
-	int val[4] = {0,};
+	char str[MAX_DEX_STORE_LEN] = {0,}, *p, *tok;
+	int len, val[4] = {0,};
 	int setting_ui;	/* setting has Dex mode? if yes, 1. otherwise 0 */
-	int run;	/* dex is running now? if yes, 1. otherwise 0 */
+	int run;	/* dex is running now?   if yes, 1. otherwise 0 */
 
 	struct secdp_sysfs_private *sysfs = g_secdp_sysfs;
 	struct secdp_misc *sec = sysfs->sec;
@@ -151,7 +147,58 @@ static ssize_t dex_store(struct class *class,
 		goto exit;
 	}
 
-	get_options(buf, 4, val);
+	if (size >= MAX_DEX_STORE_LEN) {
+		pr_err("too long args! %d\n", size);
+		goto exit;
+	}
+
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto exit;
+	}
+
+	mutex_lock(&sec->hmd_lock);
+	memcpy(str, buf, size);
+	p   = str;
+	tok = strsep(&p, ",");
+	len = strlen(tok);
+	pr_debug("tok: %s, len: %d\n", tok, len);
+
+	if (!strncmp(DEX_TAG_HMD, tok, len)) {
+		/* called by HmtManager to inform list of supported HMD devices
+		 *
+		 * Format :
+		 *   HMD,NUM,NAME01,VID01,PID01,NAME02,VID02,PID02,...
+		 *
+		 *   HMD  : tag
+		 *   NUM  : num of HMD dev ..... max 2 bytes to decimal (max 32)
+		 *   NAME : name of HMD ...... max 14 bytes, char string
+		 *   VID  : vendor  id ....... 4 bytes to hexadecimal
+		 *   PID  : product id ....... 4 bytes to hexadecimal
+		 *
+		 * ex) HMD,2,PicoVR,2d40,0000,Nreal light,0486,573c
+		 *
+		 * call hmd store function with tag(HMD),NUM removed
+		 */
+		int num_hmd = 0, sz = 0, ret;
+
+		tok = strsep(&p, ",");
+		sz  = strlen(tok);
+		ret = kstrtouint(tok, 10, &num_hmd);
+		pr_debug("HMD num: %d, sz:%d, ret:%d\n", num_hmd, sz, ret);
+		if (!ret) {
+			ret = secdp_store_hmd_dev(str + (len + sz + 2),
+					size - (len + sz + 2), num_hmd);
+		}
+		if (ret)
+			size = ret;	/* error! */
+
+		mutex_unlock(&sec->hmd_lock);
+		goto exit;
+	}
+	mutex_unlock(&sec->hmd_lock);
+
+	get_options(buf, ARRAY_SIZE(val), val);
 	pr_info("%d(0x%02x)\n", val[1], val[1]);
 	setting_ui = (val[1] & 0xf0) >> 4;
 	run = (val[1] & 0x0f);
@@ -160,7 +207,7 @@ static ssize_t dex_store(struct class *class,
 		setting_ui, run, sec->cable_connected);
 
 	dex->setting_ui = setting_ui;
-	dex->curr = run;
+	dex->dex_node_status = dex->curr = run;
 
 	mutex_lock(&sec->notifier_lock);
 	if (!sec->ccic_noti_registered) {
@@ -186,7 +233,7 @@ static ssize_t dex_store(struct class *class,
 	if (!secdp_get_cable_status() || !secdp_get_hpd_status() ||
 			secdp_get_poor_connection_status() || !secdp_get_link_train_status()) {
 		pr_info("cable is out\n");
-		dex->prev = dex->curr = DEX_DISABLED;
+		dex->prev = dex->curr = dex->dex_node_status = DEX_DISABLED;
 		goto exit;
 	}
 
@@ -292,6 +339,49 @@ exit:
 
 static CLASS_ATTR_RO(monitor_info);
 
+#ifdef CONFIG_SEC_DISPLAYPORT_ENG
+static ssize_t dp_forced_resolution_show(struct class *class,
+				struct class_attribute *attr, char *buf)
+{
+	char tmp[MAX_DEX_STORE_LEN] = {0,};
+	int  rc = 0, vic = 1;
+
+	if (forced_resolution) {
+		rc = scnprintf(buf, PAGE_SIZE,
+			"%d: %s", forced_resolution,
+			secdp_vic_to_string(forced_resolution));
+
+	} else {
+		while (secdp_vic_to_string(vic) != NULL) {
+			rc += scnprintf(buf + rc, PAGE_SIZE - rc,
+				"%d: %s", vic, secdp_vic_to_string(vic));
+			vic++;
+		}
+	}
+
+	secdp_show_hmd_dev(tmp);
+	rc += scnprintf(buf + rc, PAGE_SIZE - rc, "\n<< HMD >>\n%s\n", tmp);
+
+	return rc;
+}
+
+static ssize_t dp_forced_resolution_store(struct class *dev,
+				struct class_attribute *attr, const char *buf, size_t size)
+{
+	int val[10] = {0, };
+
+	get_options(buf, 10, val);
+
+	if (val[1] <= 0)
+		forced_resolution = 0;
+	else
+		forced_resolution = val[1];
+
+	return size;
+}
+
+static CLASS_ATTR_RW(dp_forced_resolution);
+
 static ssize_t dp_unit_test_show(struct class *class,
 				struct class_attribute *attr, char *buf)
 {
@@ -320,16 +410,22 @@ static ssize_t dp_unit_test_store(struct class *dev,
 	struct secdp_sysfs_private *sysfs = g_secdp_sysfs;
 	int val[10] = {0, };
 
-	get_options(buf, 10, val);
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto exit;
+	}
+
+	get_options(buf, ARRAY_SIZE(val), val);
 	sysfs->test_cmd = val[1];
 
 	pr_info("test_cmd: %d...%s\n", sysfs->test_cmd, secdp_utcmd_to_str(sysfs->test_cmd));
 
+exit:
 	return size;
 }
 
 static CLASS_ATTR_RW(dp_unit_test);
-
+#endif
 
 #ifdef SECDP_SELF_TEST
 struct secdp_sef_test_item g_self_test[] = {
@@ -342,7 +438,7 @@ struct secdp_sef_test_item g_self_test[] = {
 	{DP_ENUM_STR(ST_PREEM_TUN), .arg_cnt = 16, .arg_str = "pre-emphasis calibration value, -1 = disable"}, 
 	{DP_ENUM_STR(ST_VOLTAGE_TUN), .arg_cnt = 16, .arg_str = "voltage-level calibration value, -1 = disable"}, 
 };
- 
+
 int secdp_self_test_status(int cmd)
 {
 	if (cmd >= ST_MAX)
@@ -499,7 +595,12 @@ static ssize_t dp_self_test_store(struct class *dev,
 	int val[ST_ARG_CNT + 2] = {0, };
 	int arg, arg_cnt, cmd, i;
 
-	get_options(buf, ST_ARG_CNT + 2, val);
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto end;
+	}
+
+	get_options(buf, ARRAY_SIZE(val), val);
 
 	cmd = val[1];
 	arg = val[2];
@@ -513,6 +614,7 @@ static ssize_t dp_self_test_store(struct class *dev,
 		for (i = 1; i < ST_MAX; i++)
 			dp_self_test_clear_func(i);
 
+		pr_info("cmd : ST_CLEAR_CMD\n");
 		goto end;
 	}
 
@@ -530,11 +632,10 @@ static ssize_t dp_self_test_store(struct class *dev,
 		dp_self_test_clear_func(cmd);
 	}
 	
-end:
 	pr_info("cmd: %d. %s, enabled:%s\n", cmd,
 				cmd < ST_MAX ? g_self_test[cmd].cmd_str : "null",
 				cmd < ST_MAX ? (g_self_test[cmd].enabled ? "true" : "false"): "null");
-
+end:
 	return size;
 }
 
@@ -574,6 +675,11 @@ static ssize_t dp_edid_store(struct class *dev,
 	char *temp;
 	size_t i, j = 0;
 
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto error;
+	}
+
 	temp = kzalloc(size, GFP_KERNEL);
 	if (!temp) {
 		pr_err("buffer alloc error\n");
@@ -588,7 +694,7 @@ static ssize_t dp_edid_store(struct class *dev,
 			temp[j++] = buf[i];
 	}
 
-	get_options(temp, ST_EDID_SIZE + 1, val);
+	get_options(buf, ARRAY_SIZE(val), val);
 
 	if (val[0] % 128) {
 		pr_err("invalid EDID(%d)\n", val[0]);
@@ -643,13 +749,19 @@ static ssize_t dp_vx_lvl_store(struct class *dev,
 {
 	int i, val[30] = {0, };
 
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto exit;
+	}
+
 	pr_debug("+++, size(%d)\n", (int)size);
 
-	get_options(buf, 20, val);
+	get_options(buf, ARRAY_SIZE(val), val);
 	for (i = 0; i < 16; i=i+4)
 		pr_debug("%02x,%02x,%02x,%02x\n", val[i+1],val[i+2],val[i+3],val[i+4]);
 
 	secdp_catalog_vx_store(&val[1], 16);
+exit:
 	return size;
 }
 
@@ -668,13 +780,19 @@ static ssize_t dp_px_lvl_store(struct class *dev,
 {
 	int i, val[30] = {0, };
 
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto exit;
+	}
+
 	pr_debug("+++, size(%d)\n", (int)size);
 
-	get_options(buf, 20, val);
+	get_options(buf, ARRAY_SIZE(val), val);
 	for (i = 0; i < 16; i=i+4)
 		pr_debug("%02x,%02x,%02x,%02x\n", val[i+1],val[i+2],val[i+3],val[i+4]);
 
 	secdp_catalog_px_store(&val[1], 16);
+exit:
 	return size;
 }
 
@@ -698,13 +816,19 @@ static ssize_t dp_pref_skip_store(struct class *dev,
 {
 	int i, val[30] = {0, };
 
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto exit;
+	}
+
 	pr_debug("+++, size(%d)\n", (int)size);
 
-	get_options(buf, 20, val);
+	get_options(buf, ARRAY_SIZE(val), val);
 	for (i = 0; i < 16; i=i+4)
 		pr_debug("%02x,%02x,%02x,%02x\n", val[i+1],val[i+2],val[i+3],val[i+4]);
 
 	secdp_debug_prefer_skip_store(val[1]);
+exit:
 	return size;
 }
 
@@ -728,13 +852,19 @@ static ssize_t dp_pref_ratio_store(struct class *dev,
 {
 	int i, val[30] = {0, };
 
+	if (secdp_check_store_args(buf, size)) {
+		pr_err("args error!\n");
+		goto exit;
+	}
+
 	pr_debug("+++, size(%d)\n", (int)size);
 
-	get_options(buf, 20, val);
+	get_options(buf, ARRAY_SIZE(val), val);
 	for (i = 0; i < 16; i=i+4)
 		pr_debug("%02x,%02x,%02x,%02x\n", val[i+1],val[i+2],val[i+3],val[i+4]);
 
 	secdp_debug_prefer_ratio_store(val[1]);
+exit:
 	return size;
 }
 
@@ -742,18 +872,22 @@ static CLASS_ATTR_RW(dp_pref_ratio);
 #endif
 
 enum {
-	DP_SBU_SW_SEL = 0,
-	DP_FORCED_RES,
-	DEX,
+	DEX = 0,
 	DEX_VER,
 	MONITOR_INFO,
+#ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
+	DP_ERROR_INFO,
+#endif
+#ifdef CONFIG_SEC_FACTORY
+	DP_SBU_SW_SEL,
+#endif
+#ifdef CONFIG_SEC_DISPLAYPORT_ENG
+	DP_FORCED_RES,
 	DP_UNIT_TEST,
+#endif
 #ifdef SECDP_SELF_TEST
 	DP_SELF_TEST,
 	DP_EDID,
-#endif
-#ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
-	DP_ERROR_INFO,
 #endif
 #ifdef SECDP_CALIBRATE_VXPX
 	DP_VX_LVL,
@@ -764,24 +898,28 @@ enum {
 };
 
 static struct attribute *secdp_class_attrs[] = {
-	[DP_SBU_SW_SEL]			= &class_attr_dp_sbu_sw_sel.attr,
-	[DP_FORCED_RES]			= &class_attr_dp_forced_resolution.attr,
-	[DEX]					= &class_attr_dex.attr,
-	[DEX_VER]				= &class_attr_dex_ver.attr,
-	[MONITOR_INFO]			= &class_attr_monitor_info.attr,
-	[DP_UNIT_TEST]			= &class_attr_dp_unit_test.attr,
-#ifdef SECDP_SELF_TEST
-	[DP_SELF_TEST]			= &class_attr_dp_self_test.attr,
-	[DP_EDID]				= &class_attr_dp_edid.attr,
-#endif
+	[DEX]		= &class_attr_dex.attr,
+	[DEX_VER]	= &class_attr_dex_ver.attr,
+	[MONITOR_INFO]	= &class_attr_monitor_info.attr,
 #ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
-	[DP_ERROR_INFO]			= &class_attr_dp_error_info.attr,
+	[DP_ERROR_INFO] = &class_attr_dp_error_info.attr,
+#endif
+#ifdef CONFIG_SEC_FACTORY
+	[DP_SBU_SW_SEL]	= &class_attr_dp_sbu_sw_sel.attr,
+#endif
+#ifdef CONFIG_SEC_DISPLAYPORT_ENG
+	[DP_FORCED_RES]	= &class_attr_dp_forced_resolution.attr,
+	[DP_UNIT_TEST]	= &class_attr_dp_unit_test.attr,
+#endif
+#ifdef SECDP_SELF_TEST
+	[DP_SELF_TEST]	= &class_attr_dp_self_test.attr,
+	[DP_EDID]	= &class_attr_dp_edid.attr,
 #endif
 #ifdef SECDP_CALIBRATE_VXPX
-	[DP_VX_LVL]				= &class_attr_dp_vx_lvl.attr,
-	[DP_PX_LVL]				= &class_attr_dp_px_lvl.attr,
-	[DP_PREF_SKIP]			= &class_attr_dp_pref_skip.attr,
-	[DP_PREF_RATIO]			= &class_attr_dp_pref_ratio.attr,
+	[DP_VX_LVL]	= &class_attr_dp_vx_lvl.attr,
+	[DP_PX_LVL]	= &class_attr_dp_px_lvl.attr,
+	[DP_PREF_SKIP]	= &class_attr_dp_pref_skip.attr,
+	[DP_PREF_RATIO]	= &class_attr_dp_pref_ratio.attr,
 #endif
 	NULL,
 };

@@ -17,13 +17,20 @@
 #include <linux/clk.h>
 #include "dp_power.h"
 #include "dp_catalog.h"
+
 #ifdef CONFIG_SEC_DISPLAYPORT
 #include <linux/regulator/consumer.h>
 #include <linux/delay.h>
 #include "secdp.h"
-#ifdef CONFIG_COMBO_REDRIVER_PTN36502
+
+#ifdef SECDP_USE_REDRIVER
+#if defined(CONFIG_COMBO_REDRIVER_PTN36502)
 #include <linux/combo_redriver/ptn36502.h>
+#elif defined(CONFIG_COMBO_REDRIVER_NEXTIC)
+#include <linux/combo_redriver/nextic.h>
 #endif
+#endif
+
 #endif
 
 #define DP_CLIENT_NAME_SIZE	20
@@ -46,11 +53,24 @@ struct dp_power_private {
 	bool strm1_clks_on;
 #ifdef CONFIG_SEC_DISPLAYPORT
 	bool aux_pullup_on;
+
+	void (*redrv_onoff)(bool enable, int lane);
+	void (*redrv_aux_ctrl)(int cross);
 #endif
 };
 
 #ifdef CONFIG_SEC_DISPLAYPORT
 struct dp_power_private *g_secdp_power;
+
+#define DP_ENUM_STR(x)	#x
+
+enum redriver_switch_t
+{
+	REDRIVER_SWITCH_UNKNOWN = -1,
+	REDRIVER_SWITCH_RESET   =  0,
+	REDRIVER_SWITCH_CROSS,
+	REDRIVER_SWITCH_THROU,
+};
 #endif
 
 static int dp_power_regulator_init(struct dp_power_private *power)
@@ -576,8 +596,41 @@ exit:
 	return rc;
 }
 
-#ifdef CONFIG_COMBO_REDRIVER_PTN36502
-void secdp_redriver_onoff(bool enable, int lane)
+#ifdef SECDP_USE_REDRIVER
+static inline char *secdp_redriver_switch_to_string(int event)
+{
+	switch (event) {
+	case REDRIVER_SWITCH_UNKNOWN:	return DP_ENUM_STR(REDRIVER_SWITCH_UNKNOWN);
+	case REDRIVER_SWITCH_RESET:		return DP_ENUM_STR(REDRIVER_SWITCH_RESET);
+	case REDRIVER_SWITCH_CROSS:		return DP_ENUM_STR(REDRIVER_SWITCH_CROSS);
+	case REDRIVER_SWITCH_THROU:		return DP_ENUM_STR(REDRIVER_SWITCH_THROU);
+	default:						return "unknown";
+	}
+}
+
+#if defined(CONFIG_COMBO_REDRIVER_PTN36502)
+static void secdp_ptn36502_aux_ctrl(int cross)
+{
+	pr_debug("+++ cross: %s\n", secdp_redriver_switch_to_string(cross));
+
+	switch (cross)
+	{
+	case REDRIVER_SWITCH_CROSS:
+		ptn36502_config(AUX_CROSS_MODE, 0);
+		break;
+	case REDRIVER_SWITCH_THROU:
+		ptn36502_config(AUX_THRU_MODE, 0);
+		break;
+	case REDRIVER_SWITCH_RESET:
+		ptn36502_config(SAFE_STATE, 0);
+		break;
+	default:
+		pr_info("unknown: %d\n", cross);
+		break;
+	}
+}
+
+static void secdp_ptn36502_onoff(bool enable, int lane)
 {
 	pr_debug("+++ enable(%d), lane(%d)\n", enable, lane);
 
@@ -606,49 +659,99 @@ void secdp_redriver_onoff(bool enable, int lane)
 exit:
 	return;
 }
-
-#define DP_ENUM_STR(x)	#x
-
-enum redriver_switch_t
-{
-	REDRIVER_SWITCH_UNKNOWN = -1,
-	REDRIVER_SWITCH_RESET = 0,
-	REDRIVER_SWITCH_CROSS,
-	REDRIVER_SWITCH_THROU,
-};
-
-static inline char *secdp_redriver_switch_to_string(int event)
-{
-	switch (event) {
-	case REDRIVER_SWITCH_UNKNOWN:	return DP_ENUM_STR(REDRIVER_SWITCH_UNKNOWN);
-	case REDRIVER_SWITCH_RESET:		return DP_ENUM_STR(REDRIVER_SWITCH_RESET);
-	case REDRIVER_SWITCH_CROSS:		return DP_ENUM_STR(REDRIVER_SWITCH_CROSS);
-	case REDRIVER_SWITCH_THROU:		return DP_ENUM_STR(REDRIVER_SWITCH_THROU);
-	default:						return "unknown";
-	}
-}
-
-static void secdp_redriver_aux_ctrl(int cross)
+#elif defined(CONFIG_COMBO_REDRIVER_NEXTIC)
+static void secdp_nextic_aux_ctrl(int cross)
 {
 	pr_debug("+++ cross: %s\n", secdp_redriver_switch_to_string(cross));
 
 	switch (cross)
 	{
 	case REDRIVER_SWITCH_CROSS:
-		ptn36502_config(AUX_CROSS_MODE, 0);
+		//.TODO:
 		break;
 	case REDRIVER_SWITCH_THROU:
-		ptn36502_config(AUX_THRU_MODE, 0);
+		//.TODO:
 		break;
 	case REDRIVER_SWITCH_RESET:
-		ptn36502_config(SAFE_STATE, 0);
+		//.TODO:
 		break;
 	default:
 		pr_info("unknown: %d\n", cross);
 		break;
 	}
 }
+
+static void secdp_nextic_onoff(bool enable, int lane)
+{
+	pr_debug("+++ enable(%d), lane(%d)\n", enable, lane);
+
+	if (enable) {
+		int val = -1;
+
+		if (lane == 2)
+			//.TODO:
+		else if (lane == 4)
+			//.TODO:
+		else {
+			pr_err("error! unknown lane: %d\n", lane);
+			goto exit;
+		}
+
+		//.TODO:
+		pr_info("Chip_ID:  0x%x\n", val);
+
+		//.TODO:
+		pr_info("Chip_Rev: 0x%x\n", val);
+
+	} else {
+		//.TODO:
+	}
+
+exit:
+	return;
+}
 #endif
+#endif
+
+void secdp_redriver_onoff(bool enable, int lane)
+{
+	struct dp_power_private *power = g_secdp_power;
+
+	if (power && power->redrv_onoff)
+		power->redrv_onoff(enable, lane);
+}
+
+static void secdp_redriver_aux_ctrl(int cross)
+{
+	struct dp_power_private *power = g_secdp_power;
+
+	if (power && power->redrv_aux_ctrl)
+		power->redrv_aux_ctrl(cross);
+}
+
+static void secdp_redriver_register(struct dp_power_private *power)
+{
+	if (!power) {
+		pr_err("invalid power!\n");
+		goto end;
+	}
+
+#ifdef SECDP_USE_REDRIVER
+#if defined(CONFIG_COMBO_REDRIVER_PTN36502)
+	power->redrv_onoff = secdp_ptn36502_onoff;
+	power->redrv_aux_ctrl = secdp_ptn36502_aux_ctrl;
+#elif defined(CONFIG_COMBO_REDRIVER_NEXTIC)
+	power->redrv_onoff = secdp_nextic_onoff;
+	power->redrv_aux_ctrl = secdp_nextic_aux_ctrl;
+#else
+	panic("cannot be hit here!\n");
+#endif
+	pr_info("done\n");
+#endif
+
+end:
+	return;
+}
 
 /* turn on EDP_AUX switch
  * ===================================================
@@ -774,18 +877,14 @@ void secdp_config_gpios_factory(int aux_sel, bool on)
 		secdp_aux_pullup_vreg_enable(true);
 		secdp_power_set_gpio(aux_sel);
 
-#ifdef CONFIG_COMBO_REDRIVER_PTN36502
 		if (aux_sel == 1)
 			secdp_redriver_aux_ctrl(REDRIVER_SWITCH_CROSS);
 		else if (aux_sel == 0)
 			secdp_redriver_aux_ctrl(REDRIVER_SWITCH_THROU);
 		else
 			pr_err("unknown <%d>\n", aux_sel);
-#endif
 	} else {
-#ifdef CONFIG_COMBO_REDRIVER_PTN36502
 		secdp_redriver_aux_ctrl(REDRIVER_SWITCH_RESET);
-#endif
 		secdp_power_unset_gpio();
 		secdp_aux_pullup_vreg_enable(false);
 	}
@@ -1111,6 +1210,7 @@ struct dp_power *dp_power_get(struct dp_parser *parser)
 	dp_power->power_client_deinit = dp_power_client_deinit;
 
 #ifdef CONFIG_SEC_DISPLAYPORT
+	secdp_redriver_register(power);
 	g_secdp_power = power;
 #endif
 

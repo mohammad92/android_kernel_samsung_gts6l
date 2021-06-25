@@ -41,14 +41,15 @@ extern unsigned int lpcharge;
 
 /*defined at: include/linux/ccic/ccic_alternate.h*/
 #define SAMSUNG_VENDOR_ID		0x04E8
-#define 	DEXDOCK_PRODUCT_ID      0xA020     /* EE-MG950, DeX station */
-#define 	HG950_PRODUCT_ID        0xA025     /* EE-H950  */
-#define 	MPA2_PRODUCT_ID         0xA027     /* EE-P5000 */
-#define 	DEXPAD_PRODUCT_ID       0xA029     /* EE-M5100 */
-#define 	DEXCABLE_PRODUCT_ID     0xA048     /* EE-I3100 */
-#define 	MPA3_PRODUCT_ID			0xA056     /* EE-P3200 */
+#define		DEXDOCK_PRODUCT_ID      0xA020     /* EE-MG950, DeX station */
+#define		HG950_PRODUCT_ID        0xA025     /* EE-HG950  */
+#define		MPA2_PRODUCT_ID         0xA027     /* EE-P5000 */
+#define		DEXPAD_PRODUCT_ID       0xA029     /* EE-M5100 */
+#define		DEXCABLE_PRODUCT_ID     0xA048     /* EE-I3100 */
+#define		MPA3_PRODUCT_ID		0xA056     /* EE-P3200 */
 
 #define SECDP_ENUM_STR(x)		#x
+#define dim(x)				((sizeof(x))/(sizeof(x[0])))
 
 /*#define SECDP_HDCP_DISABLE*/
 #define SECDP_USB_CONCURRENCY
@@ -60,11 +61,16 @@ extern unsigned int lpcharge;
 /*#define SECDP_TEST_HDCP2P2_REAUTH*/
 
 /*#define SECDP_CALIBRATE_VXPX*/       /* debug for calibrating voltage_level, pre-emphasis_level */
-/*#define SECDP_OPTIMAL_LINK_RATE*/    /* use optimum link_rate, not max link_rate */
+#define SECDP_OPTIMAL_LINK_RATE        /* use optimum link_rate, not max link_rate */
+
 #define SECDP_WIDE_21_9_SUPPORT        /* support ultra-wide 21:9 resolution  (2560x1080p, 3440x1440p) */
 #define SECDP_WIDE_32_9_SUPPORT        /* support ultra-wide 32:9 resolution  (3840x1080p) */
 #define SECDP_WIDE_32_10_SUPPORT       /* support ultra-wide 32:10 resolution (3840x1200p) */
 /*#define SECDP_HIGH_REFRESH_SUPPORT*/ /* support more than 60hz refresh rate, such as 100/120/144hz */
+
+#if defined(CONFIG_COMBO_REDRIVER_PTN36502) || defined(CONFIG_COMBO_REDRIVER_NEXTIC)
+#define SECDP_USE_REDRIVER
+#endif
 
 #define LEN_BRANCH_REVISION		3
 #define		DPCD_BRANCH_HW_REVISION         0x509
@@ -86,8 +92,8 @@ extern unsigned int lpcharge;
 #endif
 
 #ifdef SECDP_SELF_TEST
-#define ST_EDID_SIZE 256
-#define ST_ARG_CNT 20 
+#define ST_EDID_SIZE    256
+#define ST_ARG_CNT      20
 enum {
 	ST_CLEAR_CMD,
 	ST_LANE_CNT,
@@ -138,10 +144,10 @@ enum dex_support_res_t {
 	DEX_RES_3440X1440, /* UW-QHD */
 	DEX_RES_3840X2160, /* UHD */
 };
-#define DEX_RES_DFT		DEX_RES_1920X1080   /* DeX default resolution */
-#define DEX_RES_MAX		DEX_RES_3440X1440   /* DeX max resolution */
-#define DEX_FPS_MIN		50                  /* DeX min refresh rate */
-#define DEX_FPS_MAX		60                  /* DeX max refresh rate */
+#define DEX_RES_DFT	DEX_RES_1920X1080   /* DeX default resolution */
+#define DEX_RES_MAX	DEX_RES_3440X1440   /* DeX max resolution */
+#define DEX_FPS_MIN	50                  /* DeX min refresh rate */
+#define DEX_FPS_MAX	60                  /* DeX max refresh rate */
 
 static inline char *secdp_dex_res_to_string(int res)
 {
@@ -173,12 +179,34 @@ enum DEX_STATUS {
 	DEX_DURING_MODE_CHANGE,
 };
 
+struct secdp_adapter {
+	uint ven_id;
+	uint prod_id;
+};
+
+#define MON_NAME_LEN	14	/*monitor name length, max 13 chars + null*/
+
+#define MAX_NUM_HMD	32
+#define DEX_TAG_HMD	"HMD"
+
+struct secdp_sink_dev {
+	uint ven_id;		/*vendor id from CCIC*/
+	uint prod_id;		/*product id from CCIC*/
+	char monitor_name[MON_NAME_LEN];	/* from EDID */
+};
+
 struct secdp_dex {
-	struct class *		sysfs_class;
+	struct class	*sysfs_class;
 
 	int prev;                /* previously known as "dex_now" */
 	int curr;                /* previously known as "dex_en" */
 	int setting_ui;          /* "dex_set", true if setting has Dex mode */
+	/*
+	 * 2 if resolution is changed during dex mode change.
+	 * And once dex framework reads the dex_node_stauts using dex node,
+	 * it's assigned to same value with curr.
+	 */
+	int dex_node_status;
 
 	enum dex_support_res_t res;   /* dex supported resolution */
 	char fw_ver[10];         /* firmware ver, 0:h/w, 1:s/w major, 2:s/w minor */
@@ -210,7 +238,8 @@ struct secdp_misc {
 	u8 self_test_edid[ST_EDID_SIZE];
 #endif
 
-	struct secdp_dex 	dex;
+	struct secdp_adapter	adapter;
+	struct secdp_dex	dex;
 	struct secdp_debug	debug;
 
 	int max_mir_res_idx;  /* Index of max resolution which supported by sink(mirror mode) */
@@ -218,11 +247,15 @@ struct secdp_misc {
 	int prefer_res_idx;   /* Index of preferred resolution */
 	int ignore_ratio;
 
-	bool cable_connected;    /* previously known as "cable_connected_phy" */
-	bool link_conf;          /* previously known as "sec_link_conf" */
-	atomic_t hpd;            /* previously known as "sec_hpd" */
-	bool reboot;             /* true if rebooted or shutdown */
-	int  hdcp_retry;         /* count if dp link is unstable during hdcp */
+	struct secdp_sink_dev  *hmd_list;  /*list of supported HMD device*/
+	struct mutex		hmd_lock;
+	bool hmd_dev;		/*true if connected sink is known HMD device*/
+
+	bool cable_connected;	/*previously known as "cable_connected_phy"*/
+	bool link_conf;		/*previously known as "sec_link_conf"*/
+	atomic_t hpd;		/*previously known as "sec_hpd"*/
+	bool reboot;		/*true if rebooted or shutdown*/
+	int  hdcp_retry;	/*count if dp link is unstable during hdcp*/
 
 	bool has_prefer;         /* true if preferred resolution*/
 	int  prefer_hdisp;       /* horizontal pixel of preferred resolution */
@@ -276,9 +309,7 @@ bool secdp_get_link_train_status(void);
 struct dp_panel *secdp_get_panel_info(void);
 struct drm_connector *secdp_get_connector(void);
 
-#if defined (CONFIG_SEC_DISPLAYPORT) && defined(CONFIG_COMBO_REDRIVER_PTN36502)
 void secdp_redriver_onoff(bool enable, int lane);
-#endif
 
 /** adapter type : SST or MST */
 enum secdp_adapter_t {
@@ -293,6 +324,12 @@ void secdp_config_gpios_factory(int aux_sel, bool out_en);
 enum plug_orientation secdp_get_plug_orientation(void);
 bool secdp_get_reboot_status(void);
 
+bool secdp_check_hmd_dev(const char *name_to_search);
+int  secdp_store_hmd_dev(char* buf, size_t len, int num);
+#ifdef CONFIG_SEC_DISPLAYPORT_ENG
+int  secdp_show_hmd_dev(char *buf);
+#endif
+
 void secdp_dex_res_init(void);
 void secdp_dex_do_reconnecting(void);
 bool secdp_check_dex_reconnect(void);
@@ -302,6 +339,8 @@ enum dex_support_res_t secdp_get_dex_res(void);
 void secdp_clear_link_status_update_cnt(struct dp_link *dp_link);
 void secdp_reset_link_status(struct dp_link *dp_link);
 bool secdp_check_link_stable(struct dp_link *dp_link);
+
+bool secdp_find_supported_resolution(struct dp_panel_info *timing);
 
 #ifdef SECDP_CALIBRATE_VXPX
 void secdp_catalog_vx_show(void);

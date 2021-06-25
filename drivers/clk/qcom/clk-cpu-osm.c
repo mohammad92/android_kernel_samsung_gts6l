@@ -604,7 +604,8 @@ osm_cpufreq_target_index(struct cpufreq_policy *policy, unsigned int index)
 
 	osm_set_index(c, index, c->core_num);
 
-	sec_smem_clk_osm_add_log_cpufreq(policy, index, clk_hw_get_name(&c->hw));
+	sec_smem_clk_osm_add_log_cpufreq(policy->cpu,
+				policy->freq_table[index].frequency, clk_hw_get_name(&c->hw));
 
 	arch_set_freq_scale(policy->related_cpus,
 			    policy->freq_table[index].frequency,

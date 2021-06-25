@@ -1114,10 +1114,6 @@ int sec_bat_set_charge(struct sec_battery_info *battery,
 #if defined(CONFIG_BATTERY_CISD)
 		battery->usb_overheat_check = false;
 		battery->cisd.ab_vbat_check_count = 0;
-		if (chg_mode == SEC_BAT_CHG_MODE_BUCK_OFF) {
-			battery->cisd.data[CISD_DATA_BUCK_OFF]++;
-			battery->cisd.data[CISD_DATA_BUCK_OFF_PER_DAY]++;
-		}
 #endif
 	}
 
@@ -4567,9 +4563,6 @@ static int sec_bat_set_property(struct power_supply *psy,
 				}
 				mutex_unlock(&battery->wclock);
 			}
-#if defined(CONFIG_BATTERY_CISD)
-			increase_cisd_count(CISD_DATA_DROP_VALUE);
-#endif
 			break;
 		default:
 			return -EINVAL;
@@ -6258,35 +6251,23 @@ static const struct power_supply_desc ps_power_supply_desc = {
 };
 
 #if !defined(CONFIG_SEC_FACTORY)
-static char* salescode_from_cmdline;
-
-bool sales_code_is(char* str)
-{
-	bool status = 0;
-	char* salescode;
-
-	salescode = kmalloc(4, GFP_KERNEL);
-	if (!salescode) {
-		goto out;
-	}
-	memset(salescode, 0x00,4);
-
-	salescode = salescode_from_cmdline;
-
-	pr_info("%s: %s\n", __func__,salescode);
-
-	if(!strncmp((char *)salescode, str, 3))
-		status = 1;
-
-out:	return status;
-}
+#define SALE_CODE_STR_LEN		3
+static char sales_code_from_cmdline[SALE_CODE_STR_LEN + 1];
 
 static int __init sales_code_setup(char *str)
 {
-	salescode_from_cmdline = str;
+	strlcpy(sales_code_from_cmdline, str,
+		ARRAY_SIZE(sales_code_from_cmdline));
+
 	return 1;
 }
 __setup("androidboot.sales_code=", sales_code_setup);
+
+bool sales_code_is(char* str)
+{
+	return !strncmp(sales_code_from_cmdline, str,
+				SALE_CODE_STR_LEN + 1);
+}
 #endif
 
 static int sec_battery_probe(struct platform_device *pdev)

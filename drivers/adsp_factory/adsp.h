@@ -43,6 +43,9 @@
 #define DIGITAL_HALL_AUTO_CAL_Y_PATH "/efs/FactoryApp/digital_hall_auto_cal_y"
 #define DIGITAL_HALL_AUTO_CAL_Z_PATH "/efs/FactoryApp/digital_hall_auto_cal_z"
 #endif
+#ifdef CONFIG_SUPPORT_PROX_CALIBRATION
+#define UB_CELL_ID_INFO_STRING_LENGTH 23
+#endif
 enum {
 	D_FACTOR,
 	R_COEF,
@@ -71,6 +74,7 @@ enum {
 };
 
 #if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX) || \
 	defined(CONFIG_SUPPORT_BRIGHT_COMPENSATION_LUX)
 enum {
 	OPTION_TYPE_COPR_ENABLE,
@@ -81,6 +85,7 @@ enum {
 	OPTION_TYPE_SET_HALLIC_INFO,
 	OPTION_TYPE_GET_LIGHT_CAL,
 	OPTION_TYPE_SET_LIGHT_CAL,
+	OPTION_TYPE_GET_LIGHT_DEBUG_INFO,
 	OPTION_TYPE_MAX
 };
 #endif
@@ -109,11 +114,18 @@ struct adsp_data {
 #endif
 	struct notifier_block adsp_nb;
 	int32_t fac_fstate;
-#ifdef CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR
+#if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
 	int32_t light_cal;
+#endif
+#ifdef CONFIG_SUPPORT_PROX_CALIBRATION
+	struct delayed_work prox_cal_work;
+	int32_t prox_cal;
+	char prox_ub_id[UB_CELL_ID_INFO_STRING_LENGTH];
 #endif
 	uint32_t support_algo;
 	bool restrict_mode;
+	bool init_work_done;
 };
 
 #ifdef CONFIG_SUPPORT_MOBEAM
@@ -172,11 +184,16 @@ void light_factory_init_work(struct adsp_data *data);
 #ifdef CONFIG_SUPPORT_PROX_POWER_ON_CAL
 void prox_factory_init_work(void);
 #endif
+#ifdef CONFIG_SUPPORT_PROX_CALIBRATION
+void prox_cal_init_work(struct adsp_data *data);
+void prox_cal_read_work_func(struct work_struct *work);
+#endif
 #ifdef CONFIG_SUPPORT_AK0997X
 void digital_hall_factory_auto_cal_init_work(void);
 int get_hall_angle_data(int32_t *raw_data);
 #endif
-#if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR)
+#if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
 int get_light_sidx(struct adsp_data *data);
 #endif
 #endif /* __ADSP_SENSOR_H__ */

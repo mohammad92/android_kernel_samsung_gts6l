@@ -29,6 +29,10 @@ enum __RKP_CMD_ID{
 	RKP_GET_RO_BITMAP = 0x13,
 	RKP_GET_DBL_BITMAP = 0x14,
 	RKP_GET_RKP_GET_BUFFER_BITMAP = 0x15,
+	/* dynamic load */
+	RKP_DYNAMIC_LOAD = 0x20,
+	RKP_MODULE_LOAD = 0x21,
+	RKP_BFP_LOAD = 0x22,
 	/* and KDP cmds */
 	RKP_KDP_X40 = 0x40,
 	RKP_KDP_X41 = 0x41,
@@ -53,6 +57,7 @@ enum __RKP_CMD_ID{
 	RKP_KDP_X54 = 0x54,
 	RKP_KDP_X55 = 0x55,
 	RKP_KDP_X56 = 0x56,
+	RKP_KDP_X60 = 0x60,
 #ifdef CONFIG_RKP_TEST
 	CMD_ID_TEST_GET_PAR = 0x81,
 	CMD_ID_TEST_GET_RO = 0x83,
@@ -84,6 +89,12 @@ enum __RKP_CMD_ID{
 #define FIMC_RTA_LIB_SIZE		(0x300000)
 #define FIMC_LIB_SIZE	
 
+#define RKP_MODULE_PXN_CLEAR	0x1
+#define RKP_MODULE_PXN_SET		0x2
+
+#define RKP_BPF_JIT_LOAD		0x0
+#define RKP_BPF_JIT_FREE		0x1
+
 struct rkp_init { //copy from uh (app/rkp/rkp.h)
 	u32 magic;
 	u64 vmalloc_start;
@@ -106,6 +117,16 @@ struct rkp_init { //copy from uh (app/rkp/rkp.h)
 	u32 large_memory;
 	u64 tramp_pgd;
 	u64 tramp_valias;
+};
+
+struct module_info {
+	u64 base_va;
+	u64 vm_size;
+	u64 core_base_va;
+	u64 core_text_size;
+	u64 core_ro_size;
+	u64 init_base_va;
+	u64 init_text_size;
 };
 
 #ifdef CONFIG_RKP_CFP_ROPP_SYSREGKEY
@@ -152,6 +173,10 @@ typedef struct kdp_init_struct {
 	u32 bp_cred_secptr;
 	u32 task_threadinfo;
 	u64 verifiedbootstate;
+	struct {
+		u64 empty;
+		u64 ss_initialized_va;
+	} selinux;
 } kdp_init_t;
 #endif  /* CONFIG_RKP_KDP */
 

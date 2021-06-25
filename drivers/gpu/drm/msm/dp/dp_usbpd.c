@@ -471,17 +471,10 @@ static int dp_usbpd_simulate_connect(struct dp_hpd *dp_hpd, bool hpd)
 	pr_debug("hpd_high=%d, forced_disconnect=%d, orientation=%d\n",
 			dp_usbpd->base.hpd_high, pd->forced_disconnect,
 			pd->dp_usbpd.base.orientation);
-#ifndef CONFIG_SEC_DISPLAYPORT
 	if (hpd)
 		pd->dp_cb->configure(pd->dev);
 	else
 		pd->dp_cb->disconnect(pd->dev);
-#else
-	if (hpd)
-		pd->dp_cb->configure();
-	else
-		pd->dp_cb->disconnect();
-#endif
 
 error:
 	return rc;
@@ -507,13 +500,10 @@ static int dp_usbpd_simulate_attention(struct dp_hpd *dp_hpd, int vdo)
 	pd->vdo = vdo;
 #ifndef CONFIG_SEC_DISPLAYPORT
 	dp_usbpd_get_status(pd);
+#endif
 
 	if (pd->dp_cb && pd->dp_cb->attention)
 		pd->dp_cb->attention(pd->dev);
-#else
-	if (pd->dp_cb && pd->dp_cb->attention)
-		pd->dp_cb->attention();
-#endif
 
 error:
 	return rc;
@@ -555,14 +545,15 @@ static void dp_usbpd_wakeup_phy(struct dp_hpd *dp_hpd, bool wakeup)
 
 	usbpd_vdm_in_suspend(usbpd->pd, wakeup);
 }
+#endif
 
-struct dp_hpd *dp_usbpd_get(struct device *dev, struct dp_hpd_cb *cb)
+struct dp_hpd *dp_usbpd_init(struct device *dev, struct usbpd *pd,
+		struct dp_hpd_cb *cb)
 {
 	int rc = 0;
-	const char *pd_phandle = "qcom,dp-usbpd-detection";
-	struct usbpd *pd = NULL;
 	struct dp_usbpd_private *usbpd;
 	struct dp_usbpd *dp_usbpd;
+#ifndef CONFIG_SEC_DISPLAYPORT
 	struct usbpd_svid_handler svid_handler = {
 		.svid		= USB_C_DP_SID,
 		.vdm_received	= NULL,
@@ -571,18 +562,12 @@ struct dp_hpd *dp_usbpd_get(struct device *dev, struct dp_hpd_cb *cb)
 		.disconnect	= &dp_usbpd_disconnect_cb,
 	};
 
-	if (!cb) {
-		pr_err("invalid cb data\n");
+	if (IS_ERR(pd) || !cb) {
+		pr_err("invalid data\n");
 		rc = -EINVAL;
 		goto error;
 	}
-
-	pd = devm_usbpd_get_by_phandle(dev, pd_phandle);
-	if (IS_ERR(pd)) {
-		pr_err("usbpd phandle failed (%ld)\n", PTR_ERR(pd));
-		rc = PTR_ERR(pd);
-		goto error;
-	}
+#endif
 
 	usbpd = devm_kzalloc(dev, sizeof(*usbpd), GFP_KERNEL);
 	if (!usbpd) {
@@ -591,47 +576,26 @@ struct dp_hpd *dp_usbpd_get(struct device *dev, struct dp_hpd_cb *cb)
 	}
 
 	usbpd->dev = dev;
+#ifndef CONFIG_SEC_DISPLAYPORT
 	usbpd->pd = pd;
 	usbpd->svid_handler = svid_handler;
+#endif
 	usbpd->dp_cb = cb;
 
 	dp_usbpd = &usbpd->dp_usbpd;
 	dp_usbpd->base.simulate_connect = dp_usbpd_simulate_connect;
 	dp_usbpd->base.simulate_attention = dp_usbpd_simulate_attention;
+#ifndef CONFIG_SEC_DISPLAYPORT
 	dp_usbpd->base.register_hpd = dp_usbpd_register;
 	dp_usbpd->base.wakeup_phy = dp_usbpd_wakeup_phy;
+#endif
 
 	return &dp_usbpd->base;
 error:
 	return ERR_PTR(rc);
 }
-#else
-struct dp_hpd *secdp_usbpd_get(struct device *dev, struct dp_hpd_cb *cb)
-{
-	int rc = 0;
-	struct dp_usbpd_private *usbpd;
-	struct dp_usbpd *dp_usbpd;
 
-	usbpd = devm_kzalloc(dev, sizeof(*usbpd), GFP_KERNEL);
-	if (!usbpd) {
-		rc = -ENOMEM;
-		goto error;
-	}
-
-	usbpd->dev = dev;
-	usbpd->dp_cb = cb;
-
-	dp_usbpd = &usbpd->dp_usbpd;
-	dp_usbpd->base.simulate_connect = dp_usbpd_simulate_connect;
-	dp_usbpd->base.simulate_attention = dp_usbpd_simulate_attention;
-
-	return &dp_usbpd->base;
-error:
-	return ERR_PTR(rc);
-}
-#endif/*CONFIG_SEC_DISPLAYPORT*/
-
-void dp_usbpd_put(struct dp_hpd *dp_hpd)
+void dp_usbpd_deinit(struct dp_hpd *dp_hpd)
 {
 	struct dp_usbpd *dp_usbpd;
 	struct dp_usbpd_private *usbpd;

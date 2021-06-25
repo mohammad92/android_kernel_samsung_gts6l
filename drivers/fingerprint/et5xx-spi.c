@@ -592,7 +592,7 @@ static long etspi_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 					pr_info("%s Failed Bus clk up%d\n",
 						__func__, retval);
 			} else {
-				pr_info("%s Failed Bus clk up not registered %d\n", __func__);
+				pr_info("%s Failed Bus clk up not registered\n", __func__);
 			}
 #endif
 			if (etspi->min_cpufreq_limit) {
@@ -619,7 +619,7 @@ static long etspi_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 					pr_info("%s Failed Bus clk none%d\n",
 						__func__, retval);
 			} else {
-				pr_info("%s Failed Bus clk none not registered %d\n", __func__);
+				pr_info("%s Failed Bus clk none not registered\n", __func__);
 			}
 #endif
 			retval = set_freq_limit(DVFS_FINGER_ID, -1);

@@ -62,6 +62,7 @@ static char panic_msg[SSR_REASON_LEN];
 #ifdef CONFIG_SUPPORT_DEVICE_MODE
 static int32_t curr_fstate;
 #endif
+static int ssc_lcd_on;
 
 struct sdump_data {
 	struct workqueue_struct *sdump_wq;
@@ -73,6 +74,7 @@ struct sdump_data *pdata_sdump;
 #if defined(CONFIG_SEC_FACTORY) && defined(CONFIG_SUPPORT_DUAL_6AXIS)
 extern bool is_pretest(void);
 #endif
+extern void slpi_force_ssr(void);
 
 static unsigned int sec_hw_rev(void);
 
@@ -406,6 +408,13 @@ struct ssc_flip_data {
 };
 struct ssc_flip_data *pdata_ssc_flip;
 #endif
+
+struct ssc_fssr_data {
+	struct workqueue_struct *ssc_fssr_wq;
+	struct work_struct work_ssc_fssr;
+	struct adsp_data *dev_data;
+};
+struct ssc_fssr_data *pdata_ssc_fssr;
 
 struct ois_sensor_interface{
 	void *core;
@@ -825,6 +834,35 @@ void sns_device_mode_init_work(void)
 }
 #endif
 
+void ssc_fssr_work_func(struct work_struct *work)
+{
+	struct adsp_data *data = pdata_ssc_fssr->dev_data;
+	uint8_t sleep_cnt = 0, retry_cnt = 0;
+	
+retry_fssr_check:
+	pr_info("[FACTORY] %s:%d\n", __func__, retry_cnt);
+	adsp_unicast(NULL, 0, MSG_REG_SNS, 0, MSG_TYPE_SET_CAL_DATA);
+	while (!(data->ready_flag[MSG_TYPE_SET_CAL_DATA] & 1 << MSG_REG_SNS) &&
+		sleep_cnt++ < 10)
+		msleep(200);
+
+	data->ready_flag[MSG_TYPE_SET_CAL_DATA] &= ~(1 << MSG_REG_SNS);
+	if (sleep_cnt >= 10) {
+		sleep_cnt = 0;
+		retry_cnt++;
+		if (retry_cnt > 5) {
+			slpi_force_ssr();
+		} else {
+			pr_info("[FACTORY] %s:Timeout, lcd:%d \n",
+				__func__, ssc_lcd_on);
+			if (ssc_lcd_on == 0)
+				return;
+			else
+				goto retry_fssr_check;
+		}
+	}
+}
+
 #ifdef CONFIG_SUPPORT_VIRTUAL_OPTIC
 static ssize_t fac_fstate_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
@@ -868,13 +906,15 @@ static ssize_t support_dual_sensor_show(struct device *dev,
 }
 
 #if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX) || \
 	defined(CONFIG_SUPPORT_AK0997X)
 static ssize_t lcd_onoff_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct adsp_data *data = dev_get_drvdata(dev);
 	int new_value;
-#ifdef CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR
+#if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
 	uint16_t light_idx = get_light_sidx(data);
 	int32_t msg_buf[2];
 #endif
@@ -883,20 +923,31 @@ static ssize_t lcd_onoff_store(struct device *dev,
 #endif
 
 	if (sysfs_streq(buf, "0"))
-		new_value = 0;
+		ssc_lcd_on = new_value = 0;
 	else if (sysfs_streq(buf, "1"))
-		new_value = 1;
+		ssc_lcd_on = new_value = 1;
 	else
 		return size;
 
 	pr_info("[FACTORY] %s: new_value %d\n", __func__, new_value);
-#ifdef CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR
+
+
+#ifdef CONFIG_SUPPORT_SLPI_NACK_FORCE_SSR
+	if (new_value && data->init_work_done) {
+		pdata_ssc_fssr->dev_data = data;
+		queue_work(pdata_ssc_fssr->ssc_fssr_wq, &pdata_ssc_fssr->work_ssc_fssr);
+	}
+#endif
+#if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
 	msg_buf[0] = OPTION_TYPE_LCD_ONOFF;
 	msg_buf[1] = new_value;
 
 	mutex_lock(&data->light_factory_mutex);
 	adsp_unicast(msg_buf, sizeof(msg_buf),
 		light_idx, 0, MSG_TYPE_OPTION_DEFINE);
+	adsp_unicast(msg_buf, sizeof(msg_buf),
+		MSG_SSC_CORE, 0, MSG_TYPE_OPTION_DEFINE);
 	mutex_unlock(&data->light_factory_mutex);
 #endif
 #ifdef CONFIG_SUPPORT_AK0997X
@@ -933,7 +984,7 @@ static ssize_t lcd_onoff_store(struct device *dev,
 static ssize_t abs_lcd_onoff_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
-	int32_t msg_buf[1];
+	int32_t msg_buf[2] = {OPTION_TYPE_SSC_ABS_LCD_TYPE, 0};
 	int new_value;
 
 	if (sysfs_streq(buf, "0"))
@@ -944,7 +995,7 @@ static ssize_t abs_lcd_onoff_store(struct device *dev,
 		return size;
 
 	pr_info("[FACTORY] %s: new_value %d\n", __func__, new_value);
-	msg_buf[0] = new_value;
+	msg_buf[1] = new_value;
 
 	adsp_unicast(msg_buf, sizeof(msg_buf),
 		MSG_SSC_CORE, 0, MSG_TYPE_OPTION_DEFINE);
@@ -1041,7 +1092,7 @@ void sensor_dump_work_func(struct work_struct *work)
 #else
 	int sensor_type[SENSOR_DUMP_CNT] = { MSG_ACCEL, MSG_MAG, MSG_PRESSURE, MSG_LIGHT };
 #endif
-	int i, cnt;
+	int i, cnt = 0;
 
 #ifdef CONFIG_SUPPORT_AK0997X
 	adsp_unicast(NULL, 0, MSG_DIGITAL_HALL_ANGLE, 0, MSG_TYPE_GET_CAL_DATA);
@@ -1176,6 +1227,7 @@ static DEVICE_ATTR(ssc_firmware_info, 0440, ssc_firmware_info_show, NULL);
 static DEVICE_ATTR(ssc_mode, 0664, ssc_mode_show, ssc_mode_store);
 #endif
 #if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX) || \
 	defined(CONFIG_SUPPORT_AK0997X)
 static DEVICE_ATTR(lcd_onoff, 0220, NULL, lcd_onoff_store);
 #endif
@@ -1203,6 +1255,7 @@ static struct device_attribute *core_attrs[] = {
 	&dev_attr_ssc_mode,
 #endif
 #if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX) || \
 	defined(CONFIG_SUPPORT_AK0997X)
 	&dev_attr_lcd_onoff,
 #endif
@@ -1307,6 +1360,19 @@ static int __init core_factory_init(void)
 		return -ENOMEM;
 	}
 	INIT_WORK(&pdata_sdump->work_sdump, sensor_dump_work_func);
+
+	pdata_ssc_fssr = kzalloc(sizeof(*pdata_ssc_fssr), GFP_KERNEL);
+	if (pdata_ssc_fssr == NULL)
+		return -ENOMEM;
+
+	pdata_ssc_fssr->ssc_fssr_wq =
+		create_singlethread_workqueue("ssc_fssr_wq");
+	if (pdata_ssc_fssr->ssc_fssr_wq == NULL) {
+		pr_err("[FACTORY]: %s - couldn't create ssc charge wq\n", __func__);
+		kfree(pdata_ssc_fssr);
+		return -ENOMEM;
+	}
+	INIT_WORK(&pdata_ssc_fssr->work_ssc_fssr, ssc_fssr_work_func);
 	pr_info("[FACTORY] %s\n", __func__);
 
 #ifdef CONFIG_SUPPORT_AK0997X
@@ -1343,6 +1409,11 @@ static void __exit core_factory_exit(void)
 		destroy_workqueue(pdata_sdump->sdump_wq);
 	if (pdata_sdump)
 		kfree(pdata_sdump);
+
+	if (pdata_ssc_fssr->ssc_fssr_wq)
+		destroy_workqueue(pdata_ssc_fssr->ssc_fssr_wq);
+	if (pdata_ssc_fssr)
+		kfree(pdata_ssc_fssr);
 
 	pr_info("[FACTORY] %s\n", __func__);
 }

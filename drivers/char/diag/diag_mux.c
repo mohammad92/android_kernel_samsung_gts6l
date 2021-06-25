@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, 2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, 2019-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -52,7 +52,7 @@ static struct diag_logger_ops md_log_ops = {
 	.close = diag_md_close_all,
 	.open_device = diag_md_open_device,
 	.close_device = diag_md_close_device,
-	.clear_tbl_entries = NULL,
+	.clear_tbl_entries = diag_md_clear_tbl_entries,
 	.queue_read = NULL,
 	.write = diag_md_write,
 	.close_peripheral = diag_md_close_peripheral,
@@ -125,6 +125,8 @@ int diag_pcie_register_ops(int proc, int ctx, struct diag_mux_ops *ops)
 		return 0;
 
 	pcie_logger.ops[proc] = ops;
+	DIAG_LOG(DIAG_DEBUG_MUX,
+	"diag: registering pcie for proc: %d\n", proc);
 	err = diag_pcie_register(proc, ctx, ops);
 	if (err) {
 		pr_err("diag: MUX: unable to register pcie operations for proc: %d, err: %d\n",

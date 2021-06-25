@@ -7,6 +7,7 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/ccic/usbpd.h>
+#include <linux/power_supply.h>
 #include <linux/delay.h>
 #include <linux/completion.h>
 #include <linux/ccic/usbpd.h>
@@ -21,6 +22,7 @@
 #if (defined CONFIG_CCIC_NOTIFIER || defined CONFIG_DUAL_ROLE_USB_INTF)
 #include <linux/ccic/usbpd_ext.h>
 #endif
+#include "../battery_v2/include/sec_charging_common.h"
 
 #define CHECK_MSG(pd, msg, ret) do {\
 	if (pd->phy_ops.get_status(pd, msg))\
@@ -1049,6 +1051,8 @@ policy_state usbpd_policy_snk_evaluate_capability(struct policy_data *policy)
 	struct usbpd_data *pd_data = policy_to_usbpd(policy);
 	int sink_request_obj_num = 0;
 	int ret = PE_SNK_Evaluate_Capability;
+	union power_supply_propval val;
+	struct power_supply *psy;
 
 	/**********************************************
 	Actions on entry:
@@ -1060,6 +1064,14 @@ policy_state usbpd_policy_snk_evaluate_capability(struct policy_data *policy)
 
 	/* PD State Inform to AP */
 	dev_info(pd_data->dev, "%s\n", __func__);
+
+	psy = power_supply_get_by_name("battery");
+	if (psy) {
+		val.intval = 1;
+		psy_do_property("battery", set, POWER_SUPPLY_EXT_PROP_SRCCAP, val);
+	} else {
+		pr_err("%s: Fail to get psy battery\n", __func__);
+	}
 
 #if defined(CONFIG_PDIC_PD30)
 	/* Check Specification Revision */
@@ -1102,6 +1114,7 @@ policy_state usbpd_policy_snk_select_capability(struct policy_data *policy)
 	int data_role = 0;
 	long long ms = 0;
 	int retry = 0;
+	data_obj_type *obj;
 
 	/**********************************************
 	Actions on entry:
@@ -1124,6 +1137,13 @@ policy_state usbpd_policy_snk_select_capability(struct policy_data *policy)
 
 	/* Select PDO */
 	policy->tx_data_obj[0] = usbpd_manager_select_capability(pd_data);
+
+	/* Charger W/A */
+	obj = &policy->tx_data_obj[0];
+	if (usbpd_manager_get_selected_voltage(pd_data, obj->request_data_object.object_position) >= 6900)
+		pd_data->phy_ops.set_chg_lv_mode(pd_data, 9);
+	else
+		pd_data->phy_ops.set_chg_lv_mode(pd_data, 5);
 
 	/* Clear Interrupt Status */
 	pd_data->phy_ops.get_status(pd_data, MSG_GOODCRC);
@@ -1204,6 +1224,7 @@ policy_state usbpd_policy_snk_select_capability(struct policy_data *policy)
 policy_state usbpd_policy_snk_transition_sink(struct policy_data *policy)
 {
 	struct usbpd_data *pd_data = policy_to_usbpd(policy);
+	struct usbpd_manager_data *manager = &pd_data->manager;
 	int ret  = PE_SNK_Transition_Sink;
 	long long ms = 0;
 	bool vbus_short = 0;
@@ -1257,6 +1278,9 @@ retry:
 			/* Notify Plug Attach */
 			usbpd_manager_plug_attach(pd_data->dev, ATTACHED_DEV_TYPE3_CHARGER_MUIC);
 
+			manager->pn_flag = true;
+			complete(&manager->psrdy_wait);
+
 			ret = PE_SNK_Ready;
 			break;
 		}
@@ -1281,6 +1305,31 @@ retry:
 	}
 
 	return ret;
+}
+
+bool sec_pps_control(int en)
+{
+#if defined(CONFIG_PDIC_PD30)
+	struct usbpd_data *pd_data = pd_noti.pusbpd;
+	struct usbpd_manager_data *manager = &pd_data->manager;
+	union power_supply_propval val = {0,};
+
+	dev_info(pd_data->dev, "%s\n", __func__);
+
+	val.intval = en; /* 0: stop pps, 1: start pps */
+	psy_do_property("battery", set,
+			POWER_SUPPLY_EXT_PROP_DIRECT_SEND_UVDM, val);
+	if (!en && !manager->pn_flag) {
+		reinit_completion(&manager->psrdy_wait);
+		if (!wait_for_completion_timeout(&manager->psrdy_wait, msecs_to_jiffies(1000))) {
+			dev_info(pd_data->dev, "PSRDY COMPLETION TIMEOUT\n");
+			return false;
+		}
+	}
+	return true;
+#else
+	return true;
+#endif
 }
 
 policy_state usbpd_policy_snk_ready(struct policy_data *policy)
@@ -1841,6 +1890,7 @@ policy_state usbpd_policy_drs_dfp_ufp_accept_dr_swap(struct policy_data *policy)
 	**********************************************/
 
 	dev_info(pd_data->dev, "%s\n", __func__);
+	usleep_range(3000, 3010);
 
 	pd_data->phy_ops.get_power_role(pd_data, &power_role);
 
@@ -2498,6 +2548,7 @@ policy_state usbpd_policy_prs_snk_src_accept_swap(struct policy_data *policy)
 policy_state usbpd_policy_prs_snk_src_transition_to_off(struct policy_data *policy)
 {
 	struct usbpd_data *pd_data = policy_to_usbpd(policy);
+	struct usbpd_manager_data *manager = &pd_data->manager;
 	int ret = 0;
 	long long ms = 0;
 	/**********************************************
@@ -2524,6 +2575,7 @@ policy_state usbpd_policy_prs_snk_src_transition_to_off(struct policy_data *poli
 		ms = usbpd_check_time1(pd_data);
 		if (pd_data->phy_ops.get_status(pd_data, MSG_PSRDY)) {
 			dev_info(pd_data->dev, "got PSRDY.\n");
+			manager->pn_flag = true;
 			ret = PE_PRS_SNK_SRC_Assert_Rp;
 			break;
 		}
@@ -3866,7 +3918,7 @@ policy_state usbpd_policy_dfp_vdm_svids_request(struct policy_data *policy)
 	struct usbpd_data *pd_data = policy_to_usbpd(policy);
 	int power_role = 0;
 	int ret = PE_DFP_VDM_SVIDs_NAKed;
-	long long ms = 0;	
+	long long ms = 0;
 
 	/**********************************************
 	Actions on entry:

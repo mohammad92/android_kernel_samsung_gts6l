@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -103,6 +103,7 @@ EXPORT_SYMBOL(rmnet_descriptor_add_frag);
 int rmnet_frag_ipv6_skip_exthdr(struct rmnet_frag_descriptor *frag_desc,
 				int start, u8 *nexthdrp, __be16 *fragp)
 {
+	u32 frag_size = skb_frag_size(&frag_desc->frag);
 	u8 nexthdr = *nexthdrp;
 
 	*fragp = 0;
@@ -114,10 +115,16 @@ int rmnet_frag_ipv6_skip_exthdr(struct rmnet_frag_descriptor *frag_desc,
 		if (nexthdr == NEXTHDR_NONE)
 			return -EINVAL;
 
-		hp = rmnet_frag_data_ptr(frag_desc) + start;
+		if (start >= frag_size)
+			return -EINVAL;
 
+		hp = rmnet_frag_data_ptr(frag_desc) + start;
 		if (nexthdr == NEXTHDR_FRAGMENT) {
 			__be16 *fp;
+
+			if (start + offsetof(struct frag_hdr, frag_off) >=
+			    frag_size)
+				return -EINVAL;
 
 			fp = rmnet_frag_data_ptr(frag_desc) + start +
 			     offsetof(struct frag_hdr, frag_off);
@@ -467,14 +474,14 @@ static struct sk_buff *rmnet_alloc_skb(struct rmnet_frag_descriptor *frag_desc,
 		if (frag_desc->trans_len)
 			skb_set_transport_header(head_skb, frag_desc->ip_len);
 
-		/* Packets that have no data portion don't need any frags */
-		if (hdr_len == skb_frag_size(&frag_desc->frag))
-			goto skip_frags;
-
 		/* If the headers we added are the start of the page,
 		 * we don't want to add them twice
 		 */
 		if (frag_desc->hdr_ptr == rmnet_frag_data_ptr(frag_desc)) {
+			/* "Header only" packets can be fast-forwarded */
+			if (hdr_len == skb_frag_size(&frag_desc->frag))
+				goto skip_frags;
+
 			if (!rmnet_frag_pull(frag_desc, port, hdr_len)) {
 				kfree_skb(head_skb);
 				return NULL;
@@ -809,11 +816,17 @@ rmnet_frag_segment_coal_data(struct rmnet_frag_descriptor *coal_desc,
 
 		th = (struct tcphdr *)((u8 *)iph + coal_desc->ip_len);
 		coal_desc->trans_len = th->doff * 4;
+		priv->stats.coal.coal_tcp++;
+		priv->stats.coal.coal_tcp_bytes +=
+			skb_frag_size(&coal_desc->frag);
 	} else if (coal_desc->trans_proto == IPPROTO_UDP) {
 		struct udphdr *uh;
 
 		uh = (struct udphdr *)((u8 *)iph + coal_desc->ip_len);
 		coal_desc->trans_len = sizeof(*uh);
+		priv->stats.coal.coal_udp++;
+		priv->stats.coal.coal_udp_bytes +=
+			skb_frag_size(&coal_desc->frag);
 		if (coal_desc->ip_proto == 4 && !uh->check)
 			zero_csum = true;
 	} else {

@@ -36,11 +36,19 @@ typedef struct {
 } FlashlightLevelInfo;
 
 FlashlightLevelInfo calibData[MAX_FLASHLIGHT_LEVEL] = {
-        {1001, 35},
-        {1002, 75},
-        {1004, 100},
-        {1006, 150},
-        {1009, 205}
+#if defined(CONFIG_SEC_A82XQ_PROJECT)
+	{1001, 50},
+	{1002, 75},
+	{1004, 125},
+	{1006, 175},
+	{1009, 225}
+#else
+	{1001, 35},
+	{1002, 75},
+	{1004, 100},
+	{1006, 150},
+	{1009, 205}
+#endif
 };
 #endif
 
@@ -52,7 +60,7 @@ static int cam_flash_prepare(struct cam_flash_ctrl *flash_ctrl,
 		(struct cam_flash_private_soc *)
 		flash_ctrl->soc_info.soc_private;
 
-#if !defined(CONFIG_LEDS_S2MPB02)
+#if !defined(CONFIG_LEDS_S2MPB02) && !defined(CONFIG_SEC_A82XQ_PROJECT)
 	if (!(flash_ctrl->switch_trigger)) {
 		CAM_ERR(CAM_FLASH, "Invalid argument");
 		return -EINVAL;
@@ -224,7 +232,7 @@ int cam_flash_pmic_power_ops(struct cam_flash_ctrl *fctrl,
 {
 	int rc = 0;
 
-#if !defined(CONFIG_LEDS_S2MPB02)
+#if !defined(CONFIG_LEDS_S2MPB02) && !defined(CONFIG_SEC_A82XQ_PROJECT)
 	if (!(fctrl->switch_trigger)) {
 		CAM_ERR(CAM_FLASH, "Invalid argument");
 		return -EINVAL;
@@ -522,8 +530,10 @@ static int cam_flash_high(
 	else {
 #if defined(CONFIG_SEC_BEYONDXQ_PROJECT) || defined(CONFIG_SEC_D2XQ_PROJECT) || defined(CONFIG_SEC_D2Q_PROJECT)\
 	|| defined(CONFIG_SEC_D1Q_PROJECT) || defined(CONFIG_SEC_D2XQ2_PROJECT) || defined(CONFIG_SEC_BLOOMQ_PROJECT)
+		CAM_INFO(CAM_FLASH, "CAM Low cam_flash_high 1400mA\n");
 		rc = s2mpb02_led_en(S2MPB02_FLASH_LED_1, S2MPB02_FLASH_OUT_I_1400MA, S2MPB02_LED_TURN_WAY_I2C);/* low, on */
 #else
+		CAM_INFO(CAM_FLASH, "CAM Low cam_flash_high 1200mA\n");
 		rc = s2mpb02_led_en(S2MPB02_FLASH_LED_1, S2MPB02_FLASH_OUT_I_1200MA, S2MPB02_LED_TURN_WAY_I2C);/* flash, on */
 #endif
 	}

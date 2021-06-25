@@ -240,6 +240,143 @@
 
 		samsung,mtp_read_sysfs_rx_cmds_revA	= [06 01 00 00 00 00 01 00 00 00];
 
+		/* *************************************************************
+		 *  POC CONTROL
+		 * *************************************************************
+		 */
+
+		samsung,support_poc_driver;
+		samsung,poc_image_size = <327246>;		/* 327,246 bytes */
+
+		samsung,poc_enable_tx_cmds_revA = [
+			29 00 00 00 00 00 03 F0 5A 5A
+			29 01 00 00 00 00 03 F1 F1 A2
+		];
+
+		samsung,poc_disable_tx_cmds_revA = [
+			29 00 00 00 00 00 03 F0 A5 A5
+			29 01 00 00 00 00 03 F1 A5 A5
+		];
+
+		/*
+		 * ERASE (SECTOR)
+		 * Because whole operation of erase is executed in driver level,
+		 * do not use Exclusive Lock for frame update.
+		 * Add flash lock for each cmd set.
+		 */
+
+		samsung,poc_erase_delay_us = <400000>;	/* 400ms */
+		samsung,poc_erase_sector_addr_idx = <4 5 6>;
+
+		samsung,poc_pre_erase_sector_tx_cmds_revA = [
+			29 00 00 00 00 00 03 F0 5A 5A
+			29 01 00 00 00 00 03 F1 F1 A2
+			29 00 00 00 00 00 02 C0 02				/* PGM EN (START) */
+			29 01 00 00 01 00 04 71 03 00 00		/*Access Enable + 1ms*/
+			29 00 00 00 00 00 0A C1 00 00 06 00 00 00 00 00 00	/*Flash Control*/
+			29 01 00 00 01 00 02 C0 03				/* EXE_INST + 1ms */
+			29 00 00 00 00 00 0A C1 00 00 01 00 02 00 80 00 00	/*Flash Control*/
+			29 01 00 00 0A 00 02 C0 03				/* EXE_INST + 10ms */
+		];
+
+		samsung,poc_erase_sector_tx_cmds_revA = [
+			29 01 00 00 00 00 0A C1 00 00 06 00 00 00 00 00 00	/*Flash Control*/
+			29 01 00 00 01 00 02 C0 03							/* EXE_INST + 1ms */
+			29 01 00 00 00 00 0A C1 00 00 20 00 00 00 C0 00 00	/* Flash Sector Address : 0xXX*/
+			29 01 00 00 00 00 02 C0 03							/* EXE_INST + 400ms */
+		];
+
+		samsung,poc_post_erase_sector_tx_cmds_revA = [
+			29 01 00 00 00 00 02 C0 00				/* PGM  Disable (END) */
+			29 00 00 00 00 00 03 F0 A5 A5
+			29 01 00 00 00 00 03 F1 A5 A5
+		];
+
+		// WRITE
+		samsung,poc_write_delay_us = <1000>;		/* 1ms */
+		samsung,poc_write_loop_cnt = <256>;
+		samsung,poc_write_data_size = <256>;
+		samsung,poc_write_addr_idx = <4 5 6>;
+
+		samsung,poc_pre_write_tx_cmds_revA = [
+			29 00 00 00 00 00 02 C0 02								/* PGM Enable (START) */
+			29 01 00 00 01 00 04 71 03 00 00						/*Access Enable + 1ms*/
+			29 00 00 00 00 00 0A C1 00 00 06 00 00 00 00 00 00		/*Flash Control*/
+			29 01 00 00 01 00 02 C0 03								/* Exe + 1 ms */
+			29 00 00 00 00 00 0A C1 00 00 01 00 02 00 80 00 00 		/* Flash Control */
+			29 01 00 00 0A 00 02 C0 03								/* Exe + 10 ms */
+		];
+
+		samsung,poc_write_loop_start_tx_cmds_revA = [
+			29 01 00 00 00 00 0A C1 00 00 06 00 00 00 00 00 00
+			29 01 00 00 01 00 02 C0 03
+		];
+
+		samsung,poc_write_loop_data_add_tx_cmds_revA = [
+			29 01 00 00 00 00 0A C1 00 00 32 00 00 00 C2 00	00	/* Quad_PGM/FLASH_CONT_WRITE/BIT_RATE */
+			29 01 00 00 04 00 02 C0 03
+		];
+
+		samsung,poc_write_loop_256byte_tx_cmds_revA = [
+			29 01 00 00 00 00 03 B0 00 6C
+
+			29 01 00 00 00 00 81 6C									/* 128byte write */
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+			29 01 00 00 00 00 03 B0 80 6C
+
+			29 01 00 00 00 00 81 6C									/* 128byte write */
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+				00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+		];
+
+		samsung,poc_post_write_tx_cmds_revA = [
+			29 00 00 00 00 00 02 C0 00
+		];
+
+		// READ
+
+		samsung,poc_read_delay_us = <70>;		/* 70 us */
+		samsung,poc_read_addr_idx = <4 5 6>;
+
+		samsung,poc_pre_read_tx_cmds_revA = [
+			29 00 00 00 00 00 03 F0 5A 5A
+			29 01 00 00 00 00 03 F1 F1 A2
+			29 00 00 00 00 00 02 C0 02							/* PGM EN (START) */
+			29 00 00 00 01 00 04 71 03 00 00					/*Access Enable + 1ms*/ 
+			29 01 00 00 00 00 0A C1 00 00 06 00 00 00 00 00 00	/* Flash Control  */
+			29 00 00 00 01 00 02 C0 03							/* EXE_INST + 1 ms Delay */
+			29 00 00 00 00 00 0A C1 00 00 01 00 02 00 80 00 00	/* Flash Control */
+			29 01 00 00 0A 00 02 C0 03							/* EXE_INST + 10ms */
+		];
+
+		samsung,poc_read_tx_cmds_revA = [
+			29 01 00 00 00 00 0A C1 00 00 6B 00 00 00 C0 00 80	/* Read Address Setting */
+			29 01 00 00 0A 00 02 C0 03							/* Flash Pgm Execution  + 10ms */
+		];
+
+		samsung,poc_read_rx_cmds_revA = [06 01 00 00 00 00 01 6E 80 00];	/* read 128 bytes */
+
+		samsung,poc_post_read_tx_cmds_revA = [
+			29 01 00 00 00 00 02 C0 00
+			29 00 00 00 00 00 03 F0 A5 A5
+			29 01 00 00 00 00 03 F1 A5 A5
+		];
+
+		samsung,poc_mca_check_rx_cmds_revA	= [06 01 00 00 00 00 01 91 5E 00];	/* MCA Check: Read 94(5E) paramteres from 91h reg */
 
 		/* *************************************************************
 		 *  COPR

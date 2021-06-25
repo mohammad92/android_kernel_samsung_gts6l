@@ -494,7 +494,7 @@ static void s2mu107_reset_fg(struct s2mu107_fuelgauge_data *fuelgauge)
 
 	/* Dumpdone. Re-calculate SOC */
 	s2mu107_write_and_verify_reg_byte_no_en(fuelgauge->i2c, S2MU107_REG_START, 0x0F);
-	mdelay(300);
+	msleep(300);
 
 	/* If it was voltage mode, recover it */
 	if (fuelgauge->mode == HIGH_SOC_VOLTAGE_MODE) {
@@ -808,7 +808,7 @@ static void s2mu107_fg_low_vbat_WA(struct s2mu107_fuelgauge_data *fuelgauge)
 			s2mu107_write_and_verify_reg_byte_no_en(fuelgauge->i2c, 0x29, 0x07);
 			/* Dumpdone. Re-calculate SOC */
 			s2mu107_write_and_verify_reg_byte_no_en(fuelgauge->i2c, S2MU107_REG_START, 0x0F);
-			mdelay(300);
+			msleep(300);
 			s2mu107_update_reg_byte_no_en(fuelgauge->i2c, 0x29, 0x00, 0x01);
 
 			s2mu107_write_disable(fuelgauge->i2c);
@@ -1618,6 +1618,7 @@ static int s2mu107_fg_get_property(struct power_supply *psy,
 {
 	struct s2mu107_fuelgauge_data *fuelgauge =
 					power_supply_get_drvdata(psy);
+	enum power_supply_ext_property ext_psp = (enum power_supply_ext_property) psp;
 	static struct timespec old_ts = {0, };
 	struct timespec c_ts = {0, };
 
@@ -1794,6 +1795,30 @@ static int s2mu107_fg_get_property(struct power_supply *psy,
 		fuelgauge->soh = s2mu107_get_soh(fuelgauge);
 		val->intval = fuelgauge->soh;
 		break;
+	case POWER_SUPPLY_PROP_MAX ... POWER_SUPPLY_EXT_PROP_MAX:
+		switch (ext_psp) {
+		case POWER_SUPPLY_EXT_PROP_INBAT_VOLTAGE:
+			{
+				int jig_status = val->intval;
+				union power_supply_propval value = {0, };
+
+				value.intval = SEC_BAT_INBAT_FGSRC_SWITCHING_ON;
+				psy_do_property("s2mu107-fuelgauge", set,
+						POWER_SUPPLY_EXT_PROP_INBAT_VOLTAGE_FGSRC_SWITCHING, value);
+
+				val->intval = s2mu107_get_vbat(fuelgauge);
+
+				if (jig_status) {
+					value.intval = SEC_BAT_INBAT_FGSRC_SWITCHING_OFF;
+					psy_do_property("s2mu107-fuelgauge", set,
+							POWER_SUPPLY_EXT_PROP_INBAT_VOLTAGE_FGSRC_SWITCHING, value);
+				}
+			}
+			break;
+		default:
+			return -EINVAL;
+		}
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -1873,7 +1898,7 @@ static int s2mu107_fg_set_property(struct power_supply *psy,
 						(val->intval == SEC_BAT_FGSRC_SWITCHING_ON)) {
 					/* Get Battery voltage (by I2C control) */
 					s2mu107_update_reg_byte(fuelgauge->i2c, 0x25, 0x10, 0x30);
-					mdelay(1000);
+					msleep(1000);
 					s2mu107_read_reg_byte(fuelgauge->i2c, 0x25, &temp);
 					pr_info("%s: SW Vbat: fgsrc_switching_on: REG25:0x%02x, 0x25[5:4]=0x%x\n",
 							__func__, temp, (temp & 0x30) >> 4);
@@ -1885,7 +1910,7 @@ static int s2mu107_fg_set_property(struct power_supply *psy,
 				} else if ((val->intval == SEC_BAT_INBAT_FGSRC_SWITCHING_OFF) ||
 						(val->intval == SEC_BAT_FGSRC_SWITCHING_OFF)) {
 					s2mu107_update_reg_byte(fuelgauge->i2c, 0x25, 0x30, 0x30);
-					mdelay(1000);
+					msleep(1000);
 					s2mu107_read_reg_byte(fuelgauge->i2c, 0x25, &temp);
 					pr_info("%s: SW Vsys: fgsrc_switching_off: REG25:0x%02x, 0x25[5:4]=0x%x\n",
 							__func__, temp, (temp & 0x30) >> 4);

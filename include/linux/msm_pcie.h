@@ -82,15 +82,16 @@ static inline int msm_msi_init(struct device *dev)
 #ifdef CONFIG_PCI_MSM
 
 /**
- * msm_pcie_allow_l1 - allow PCIe link to enter L1
+ * msm_pcie_allow_l1 - allow PCIe link to re-enter L1
  * @pci_dev:		client's pci device structure
  *
- * This function gives PCIe clients the control to allow the link to enter L1.
+ * This function gives PCIe clients the control to allow the link to re-enter
+ * L1. Should only be used after msm_pcie_prevent_l1 has been called.
  */
 void msm_pcie_allow_l1(struct pci_dev *pci_dev);
 
 /**
- * msm_pcie_prevent_l1 - keeps PCIe link out of L1
+ * msm_pcie_request_not_enter_l1 - keeps PCIe link out of L1
  * @pci_dev:		client's pci device structure
  *
  * This function gives PCIe clients the control to exit and prevent the link
@@ -237,11 +238,11 @@ static inline int msm_pcie_pm_control(enum msm_pcie_pm_opt pm_opt, u32 busnr,
 	return -ENODEV;
 }
 
-static inline void msm_pcie_allow_l1(struct pci_dev *pci_dev)
+static inline void msm_pcie_request_allow_l1(struct pci_dev *pci_dev)
 {
 }
 
-static inline int msm_pcie_prevent_l1(struct pci_dev *pci_dev)
+static inline int msm_pcie_request_not_enter_l1(struct pci_dev *pci_dev)
 {
 	return -ENODEV;
 }
@@ -296,9 +297,16 @@ enum l1ss_ctrl_ids {
 	L1SS_MAX
 };
 
+void sec_pcie_set_use_ep_loaded(struct pci_dev *dev);
+void sec_pcie_set_ep_driver_loaded(struct pci_dev *dev, bool is_loaded);
+
 int sec_pcie_l1ss_enable(int ctrl_id);
 int sec_pcie_l1ss_disable(int ctrl_id);
 #else
+
+#define sec_pcie_set_use_ep_loaded(dev) do { } while(0)
+#define sec_pcie_set_ep_driver_loaded(dev, is_loaded) do { } while(0)
+
 inline int sec_pcie_l1ss_enable(int ctrl_id)
 {
 	return -ENODEV;

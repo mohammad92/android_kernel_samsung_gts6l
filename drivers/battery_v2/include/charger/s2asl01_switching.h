@@ -186,4 +186,6 @@ struct s2asl01_switching_data {
 	u8 addr;
 	u8 data;
 };
+
+static void s2asl01_init_regs(struct s2asl01_switching_data *switching);
 #endif /* __S2ASL01_SWITCHING_H */

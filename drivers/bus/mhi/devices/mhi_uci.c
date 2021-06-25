@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,6 +21,7 @@
 #include <linux/of_device.h>
 #include <linux/poll.h>
 #include <linux/slab.h>
+#include <linux/termios.h>
 #include <linux/types.h>
 #include <linux/wait.h>
 #include <linux/uaccess.h>
@@ -56,7 +57,9 @@ struct uci_dev {
 	size_t actual_mtu; /* maximum size of incoming buffer */
 	int ref_count;
 	bool enabled;
+	u32 tiocm;
 	void *ipc_log;
+	enum MHI_DEBUG_LEVEL *ipc_log_lvl;
 };
 
 struct mhi_uci_drv {
@@ -71,36 +74,33 @@ enum MHI_DEBUG_LEVEL msg_lvl = MHI_MSG_LVL_ERROR;
 
 #ifdef CONFIG_MHI_DEBUG
 
-#define IPC_LOG_LVL (MHI_MSG_LVL_VERBOSE)
 #define MHI_UCI_IPC_LOG_PAGES (25)
-
-#else
-
-#define IPC_LOG_LVL (MHI_MSG_LVL_ERROR)
-#define MHI_UCI_IPC_LOG_PAGES (1)
-
-#endif
-
-#ifdef CONFIG_MHI_DEBUG
-
 #define MSG_VERB(fmt, ...) do { \
 		if (msg_lvl <= MHI_MSG_LVL_VERBOSE) \
 			pr_err("[D][%s] " fmt, __func__, ##__VA_ARGS__); \
-		if (uci_dev->ipc_log && (IPC_LOG_LVL <= MHI_MSG_LVL_VERBOSE)) \
-			ipc_log_string(uci_dev->ipc_log, "[D][%s] " fmt, \
-				       __func__, ##__VA_ARGS__); \
+		if (uci_dev->ipc_log && uci_dev->ipc_log_lvl && \
+		    (*uci_dev->ipc_log_lvl <= MHI_MSG_LVL_VERBOSE)) \
+			ipc_log_string(uci_dev->ipc_log, \
+				"[D][%s] " fmt, __func__, ##__VA_ARGS__); \
 	} while (0)
 
 #else
 
-#define MSG_VERB(fmt, ...)
+#define MHI_UCI_IPC_LOG_PAGES (1)
+#define MSG_VERB(fmt, ...) do { \
+		if (uci_dev->ipc_log && uci_dev->ipc_log_lvl && \
+		    (*uci_dev->ipc_log_lvl <= MHI_MSG_LVL_VERBOSE)) \
+			ipc_log_string(uci_dev->ipc_log, \
+				"[D][%s] " fmt, __func__, ##__VA_ARGS__); \
+	} while (0)
 
 #endif
 
 #define MSG_LOG(fmt, ...) do { \
 		if (msg_lvl <= MHI_MSG_LVL_INFO) \
 			pr_err("[I][%s] " fmt, __func__, ##__VA_ARGS__); \
-		if (uci_dev->ipc_log && (IPC_LOG_LVL <= MHI_MSG_LVL_INFO)) \
+		if (uci_dev->ipc_log && uci_dev->ipc_log_lvl && \
+		    (*uci_dev->ipc_log_lvl <= MHI_MSG_LVL_INFO)) \
 			ipc_log_string(uci_dev->ipc_log, "[I][%s] " fmt, \
 				       __func__, ##__VA_ARGS__); \
 	} while (0)
@@ -108,7 +108,8 @@ enum MHI_DEBUG_LEVEL msg_lvl = MHI_MSG_LVL_ERROR;
 #define MSG_ERR(fmt, ...) do { \
 		if (msg_lvl <= MHI_MSG_LVL_ERROR) \
 			pr_err("[E][%s] " fmt, __func__, ##__VA_ARGS__); \
-		if (uci_dev->ipc_log && (IPC_LOG_LVL <= MHI_MSG_LVL_ERROR)) \
+		if (uci_dev->ipc_log && uci_dev->ipc_log_lvl && \
+		    (*uci_dev->ipc_log_lvl <= MHI_MSG_LVL_ERROR)) \
 			ipc_log_string(uci_dev->ipc_log, "[E][%s] " fmt, \
 				       __func__, ##__VA_ARGS__); \
 	} while (0)
@@ -157,11 +158,24 @@ static long mhi_uci_ioctl(struct file *file,
 {
 	struct uci_dev *uci_dev = file->private_data;
 	struct mhi_device *mhi_dev = uci_dev->mhi_dev;
+	struct uci_chan *uci_chan = &uci_dev->dl_chan;
 	long ret = -ERESTARTSYS;
 
 	mutex_lock(&uci_dev->mutex);
-	if (uci_dev->enabled)
+
+	if (cmd == TIOCMGET) {
+		spin_lock_bh(&uci_chan->lock);
+		ret = uci_dev->tiocm;
+		spin_unlock_bh(&uci_chan->lock);
+	} else if (uci_dev->enabled) {
 		ret = mhi_ioctl(mhi_dev, cmd, arg);
+		if (!ret) {
+			spin_lock_bh(&uci_chan->lock);
+			uci_dev->tiocm = mhi_dev->tiocm;
+			spin_unlock_bh(&uci_chan->lock);
+		}
+	}
+
 	mutex_unlock(&uci_dev->mutex);
 
 	return ret;
@@ -224,9 +238,16 @@ static unsigned int mhi_uci_poll(struct file *file, poll_table *wait)
 	spin_lock_bh(&uci_chan->lock);
 	if (!uci_dev->enabled) {
 		mask = POLLERR;
-	} else if (!list_empty(&uci_chan->pending) || uci_chan->cur_buf) {
-		MSG_VERB("Client can read from node\n");
-		mask |= POLLIN | POLLRDNORM;
+	} else {
+		if (!list_empty(&uci_chan->pending) || uci_chan->cur_buf) {
+			MSG_VERB("Client can read from node\n");
+			mask |= POLLIN | POLLRDNORM;
+		}
+
+		if (uci_dev->tiocm) {
+			MSG_VERB("Line status changed\n");
+			mask |= POLLPRI;
+		}
 	}
 	spin_unlock_bh(&uci_chan->lock);
 
@@ -588,6 +609,7 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 			 const struct mhi_device_id *id)
 {
 	struct uci_dev *uci_dev;
+	struct mhi_controller *mhi_cntrl = mhi_dev->mhi_cntrl;
 	int minor;
 	char node_name[32];
 	int dir;
@@ -623,6 +645,7 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 		 mhi_dev->ul_chan_id);
 	uci_dev->ipc_log = ipc_log_context_create(MHI_UCI_IPC_LOG_PAGES,
 						  node_name, 0);
+	uci_dev->ipc_log_lvl = &mhi_cntrl->log_lvl;
 
 	for (dir = 0; dir < 2; dir++) {
 		struct uci_chan *uci_chan = (dir) ?
@@ -633,7 +656,7 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 	};
 
 	uci_dev->mtu = min_t(size_t, id->driver_data, mhi_dev->mtu);
-	uci_dev->actual_mtu = uci_dev->mtu - sizeof(struct uci_buf);
+	uci_dev->actual_mtu = uci_dev->mtu -  sizeof(struct uci_buf);
 	mhi_device_set_devdata(mhi_dev, uci_dev);
 	uci_dev->enabled = true;
 
@@ -689,6 +712,20 @@ static void mhi_dl_xfer_cb(struct mhi_device *mhi_dev,
 	wake_up(&uci_chan->wq);
 }
 
+static void mhi_status_cb(struct mhi_device *mhi_dev, enum MHI_CB reason)
+{
+	struct uci_dev *uci_dev = mhi_device_get_devdata(mhi_dev);
+	struct uci_chan *uci_chan = &uci_dev->dl_chan;
+	unsigned long flags;
+
+	if (reason == MHI_CB_DTR_SIGNAL) {
+		spin_lock_irqsave(&uci_chan->lock, flags);
+		uci_dev->tiocm = mhi_dev->tiocm;
+		spin_unlock_irqrestore(&uci_chan->lock, flags);
+		wake_up(&uci_chan->wq);
+	}
+}
+
 /* .driver_data stores max mtu */
 static const struct mhi_device_id mhi_uci_match_table[] = {
 	{ .chan = "LOOPBACK", .driver_data = 0x1000 },
@@ -707,6 +744,7 @@ static struct mhi_driver mhi_uci_driver = {
 	.probe = mhi_uci_probe,
 	.ul_xfer_cb = mhi_ul_xfer_cb,
 	.dl_xfer_cb = mhi_dl_xfer_cb,
+	.status_cb = mhi_status_cb,
 	.driver = {
 		.name = MHI_UCI_DRIVER_NAME,
 		.owner = THIS_MODULE,

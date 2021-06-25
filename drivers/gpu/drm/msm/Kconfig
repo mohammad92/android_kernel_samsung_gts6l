@@ -1,4 +1,5 @@
 source "drivers/gpu/drm/msm/samsung/Kconfig"
+source "drivers/gpu/drm/msm/samsung_lego/Kconfig"
 
 config DRM_MSM
 	tristate "MSM DRM"
@@ -163,6 +164,16 @@ config DRM_SDE_SHD
 	  Each logical display will appear as different
 	  connectors and report back to user.
 
+config DRM_SDE_SHP
+	bool "Enable Shared plane support in SDE DRM"
+	depends on DRM_MSM
+	help
+	  Choose this option for shared plane support.
+	  This option enables multiple logical planes
+	  to share one base physical plane hardware.
+	  Each logical plane will appear as different
+	  planes and report back to user.
+
 config DRM_MSM_DSI_14NM_PHY
 	bool "Enable DSI 14nm PHY driver in MSM DRM (used by MSM8996/APQ8096)"
 	depends on DRM_MSM_DSI
@@ -207,3 +218,9 @@ config SEC_DISPLAYPORT_LOGGER
 	depends on SEC_DISPLAYPORT
 	help
           Samsung specific displayport log changes.
+
+config SEC_DISPLAYPORT_ENG
+	bool "SEC DISPLAYPORT ENG feature"
+	depends on SEC_DISPLAYPORT
+	help
+          Samsung specific eng test code for displayport.

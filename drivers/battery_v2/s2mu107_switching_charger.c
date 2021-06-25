@@ -199,7 +199,7 @@ static int s2mu107_sc_otg_control(
 			usleep_range(1000, 1100);
 			pr_info("%s: Exit sc fault!\n", __func__);
 			s2mu107_update_reg(sw_charger->i2c, S2MU107_SC_CTRL18, 0x10, 0x30);
-			msleep(10);
+			usleep_range(10000, 11000);
 			/* protecting rev boosting end */
 		}
 

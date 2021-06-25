@@ -22,7 +22,7 @@ int fscrypt_sdp_ioctl_get_sdp_info(struct inode *inode, unsigned long arg)
 	req.sdp_enabled = 1;
 
 	ci = inode->i_crypt_info;
-	if(!ci->ci_sdp_info) {
+	if (!ci->ci_sdp_info) {
 		DEK_LOGE("get_info: can't find sdp info\n");
 	} else {
 		DEK_LOGD("get_info: ci->i_crypt_info->sdp_flags: 0x%08x\n",
@@ -97,8 +97,8 @@ int fscrypt_sdp_ioctl_set_sensitive(struct inode *inode, unsigned long arg)
 				DEK_LOGD("Temporarily allowed to process not vold.");
 			} else {
 #endif
-			DEK_LOGE("Only vold as root process can set sensitive directory\n");
-			return -EPERM;
+				DEK_LOGE("Only vold as root process can set sensitive directory\n");
+				return -EPERM;
 #ifdef CONFIG_SDP_KEY_DUMP
 			}
 #endif

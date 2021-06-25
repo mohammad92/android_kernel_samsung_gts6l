@@ -287,7 +287,6 @@ static int s2mu106_usbpd_get_pmeter_volt(struct s2mu106_usbpd_data *pdic_data)
 static int s2mu106_usbpd_check_vbus(struct s2mu106_usbpd_data *pdic_data,
 												int volt, CCIC_VBUS_SEL mode)
 {
-	int delay = 20;
 	int retry = 100;
 	int i = 0;
 	int ret = 0;
@@ -308,7 +307,6 @@ static int s2mu106_usbpd_check_vbus(struct s2mu106_usbpd_data *pdic_data,
 				msleep(730);
 				return true;
 			}
-			msleep(delay);
 		}
 	} else if (mode == VBUS_ON) {
 		ret = s2mu106_usbpd_get_pmeter_volt(pdic_data);
@@ -1045,6 +1043,11 @@ static int s2mu106_tx_msg(void *_data,
 	if (ret < 0)
 		goto done;
 
+	pr_info("%s Array Header Read 0x%02X%02X \n",  __func__, send_msg[1],send_msg[0]);
+	s2mu106_usbpd_read_reg(pdic_data->i2c, S2MU106_REG_MSG_TX_HEADER_L, &send_msg[0]);
+	s2mu106_usbpd_read_reg(pdic_data->i2c, S2MU106_REG_MSG_TX_HEADER_H, &send_msg[1]);
+	pr_info("%s Tx Buffer Header Read 0x%02X%02X \n",  __func__, send_msg[1],send_msg[0]);
+
 	s2mu106_send_msg(i2c);
 
 done:
@@ -1087,6 +1090,37 @@ static int s2mu106_set_otg_control(void *_data, int val)
 	mutex_unlock(&pdic_data->cc_mutex);
 
 	return 0;
+}
+
+static int s2mu106_set_chg_lv_mode(void *_data, int voltage)
+{
+	struct power_supply *psy_charger;
+	union power_supply_propval val;
+	int ret = 0;
+
+	psy_charger = get_power_supply_by_name("s2mu106-charger");
+	if (psy_charger == NULL) {
+		pr_err("%s: Fail to get psy charger\n", __func__);
+		return -1;
+	}
+
+	if (voltage == 5) {
+		val.intval = 0;
+	} else if (voltage == 9) {
+		val.intval = 1;
+	} else {
+		pr_err("%s: invalid pram:%d\n", __func__, voltage);
+		return -1;
+	}
+
+	ret = psy_charger->desc->set_property(psy_charger,
+		POWER_SUPPLY_PROP_2LV_3LV_CHG_MODE, &val);
+
+	if (ret)
+		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
+			__func__, ret);
+
+	return ret;
 }
 
 static int s2mu106_set_cc_control(void *_data, int val)
@@ -2844,7 +2878,7 @@ static void s2mu106_usbpd_detach_init(struct s2mu106_usbpd_data *pdic_data)
 			reg_data |= S2MU106_REG_PLUG_CTRL_DRP;
 			s2mu106_usbpd_write_reg(i2c, S2MU106_REG_PLUG_CTRL_PORT, reg_data);
 		}
-	}	
+	}
 	s2mu106_snk(i2c);
     s2mu106_ufp(i2c);
 	pdic_data->rid = REG_RID_MAX;
@@ -2974,6 +3008,7 @@ static int s2mu106_check_port_detect(struct s2mu106_usbpd_data *pdic_data)
 	struct i2c_client *i2c = pdic_data->i2c;
 	struct device *dev = &i2c->dev;
 	struct usbpd_data *pd_data = dev_get_drvdata(dev);
+	struct usbpd_manager_data *manager = &pd_data->manager;
 	u8 data, val;
 	u8 cc1_val = 0, cc2_val = 0;
 	int ret = 0;
@@ -2995,6 +3030,7 @@ static int s2mu106_check_port_detect(struct s2mu106_usbpd_data *pdic_data)
 
 	if ((data & S2MU106_PR_MASK) == S2MU106_PDIC_SINK) {
 		dev_info(dev, "SINK\n");
+		manager->pn_flag = false;
 		pdic_data->detach_valid = false;
 		pdic_data->power_role = PDIC_SINK;
 		pdic_data->data_role = USBPD_UFP;
@@ -3045,6 +3081,7 @@ static int s2mu106_check_port_detect(struct s2mu106_usbpd_data *pdic_data)
 			dev_info(&i2c->dev, "%s attach accessory\n", __func__);
 			return -1;
 		}
+		manager->pn_flag = false;
 		pdic_data->detach_valid = false;
 		pdic_data->power_role = PDIC_SOURCE;
 		pdic_data->data_role = USBPD_DFP;
@@ -3784,6 +3821,7 @@ static usbpd_phy_ops_type s2mu106_ops = {
 	.pd_vbus_short_check	= s2mu106_pd_vbus_short_check,
 	.set_cc_control		= s2mu106_set_cc_control,
 	.send_pd_info		= s2mu106_send_pd_info,
+	.set_chg_lv_mode	= s2mu106_set_chg_lv_mode,
 #if defined(CONFIG_CHECK_CTYPE_SIDE) || defined(CONFIG_CCIC_SYSFS)
 	.get_side_check		= s2mu106_get_side_check,
 #endif

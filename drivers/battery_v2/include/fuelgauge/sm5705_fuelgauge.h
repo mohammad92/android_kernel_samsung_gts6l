@@ -23,6 +23,11 @@
 #define FG_DRIVER_VER "0.0.0.1"
 // #define ENABLE_FULL_OFFSET 1
 /*To differentiate two battery Packs: SDI & ATL*/
+struct cv_slope {
+	int fg_current;
+	int soc;
+	int time;
+};
 enum {
 	SDI_BATTERY_TYPE = 0,
 	ATL_BATTERY_TYPE,
@@ -190,6 +195,9 @@ struct sec_fuelgauge_info {
 	int fg_irq;
 	int jig_gpio;
 	int capacity;
+	unsigned int ttf_capacity;
+	struct cv_slope *cv_data;
+	int cv_data_length;
 };
 
 ssize_t sm5705_fg_show_attrs(struct device *dev, struct device_attribute *attr, char *buf);

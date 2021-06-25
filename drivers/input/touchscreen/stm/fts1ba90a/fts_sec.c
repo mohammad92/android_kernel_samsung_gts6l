@@ -140,6 +140,7 @@ static void aot_enable(void *device_data);
 static void aod_enable(void *device_data);
 static void set_aod_rect(void *device_data);
 static void get_aod_rect(void *device_data);
+static void fod_lp_mode(void *device_data);
 static void fod_enable(void *device_data);
 static void set_fod_rect(void *device_data);
 static void singletap_enable(void *device_data);
@@ -150,6 +151,8 @@ static void delay(void *device_data);
 static void debug(void *device_data);
 static void factory_cmd_result_all(void *device_data);
 static void run_force_calibration(void *device_data);
+static void set_note_mode(void *device_data);
+static void set_game_mode(void *device_data);
 static void set_factory_level(void *device_data);
 
 static void not_support_cmd(void *device_data);
@@ -228,6 +231,7 @@ struct sec_cmd ft_commands[] = {
 	{SEC_CMD_H("aod_enable", aod_enable),},
 	{SEC_CMD("set_aod_rect", set_aod_rect),},
 	{SEC_CMD("get_aod_rect", get_aod_rect),},
+	{SEC_CMD_H("fod_lp_mode", fod_lp_mode),},
 	{SEC_CMD("fod_enable", fod_enable),},
 	{SEC_CMD("set_fod_rect", set_fod_rect),},
 	{SEC_CMD_H("singletap_enable", singletap_enable),},
@@ -238,6 +242,8 @@ struct sec_cmd ft_commands[] = {
 	{SEC_CMD("debug", debug),},
 	{SEC_CMD("factory_cmd_result_all", factory_cmd_result_all),},
 	{SEC_CMD("run_force_calibration", run_force_calibration),},
+	{SEC_CMD_H("set_note_mode", set_note_mode),},
+	{SEC_CMD_H("set_game_mode", set_game_mode),},
 	{SEC_CMD("set_factory_level", set_factory_level),},
 	{SEC_CMD("not_support_cmd", not_support_cmd),},
 };
@@ -1839,7 +1845,7 @@ static void module_on_master(void *device_data)
 	ret = fts_start_device(info);
 
 	if (info->input_dev->disabled)
-		fts_stop_device(info, info->lowpower_flag);
+		fts_stop_device(info, info->lowpower_flag || info->fod_lp_mode);
 
 	if (ret == 0)
 		snprintf(buff, sizeof(buff), "OK");
@@ -4488,6 +4494,32 @@ NG:
 	sec_cmd_set_cmd_exit(sec);
 }
 
+static void fod_lp_mode(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct fts_ts_info *info = container_of(sec, struct fts_ts_info, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+
+	sec_cmd_set_default_result(sec);
+
+	if (!info->board->support_fod) {
+		input_err(true, &info->client->dev, "%s: fod is not supported\n", __func__);
+		snprintf(buff, sizeof(buff), "%s", "NA");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+		sec_cmd_set_cmd_exit(sec);
+	}
+
+	info->fod_lp_mode = sec->cmd_param[0] & 0xFF;
+	input_info(true, &info->client->dev, "%s: %d, lp:0x%02X\n",
+			__func__, info->fod_lp_mode, info->lowpower_flag);
+
+	snprintf(buff, sizeof(buff), "OK");
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+}
+
 static void fod_enable(void *device_data)
 {
 	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
@@ -4996,6 +5028,90 @@ autotune_fail:
 	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
 
 	input_info(true, &info->client->dev, "%s: %s\n", __func__, buff);
+}
+
+static void set_note_mode(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct fts_ts_info *info = container_of(sec, struct fts_ts_info, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+	u8 regAdd[3];
+	int ret;
+
+	sec_cmd_set_default_result(sec);
+
+	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
+		input_err(true, &info->client->dev,
+				"%s: wrong param %d\n", __func__, sec->cmd_param[0]);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto out;
+	}
+
+	regAdd[0] = 0xC1;
+	regAdd[1] = 0x10;
+	regAdd[2] = sec->cmd_param[0] & 0xFF;
+
+	input_info(true, &info->client->dev, "%s: %s\n",
+			__func__, sec->cmd_param[0] ? "enable" : "disable");
+
+	ret = fts_write_reg(info, regAdd, 3);
+	if (ret < 0) {
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+	} else {
+		snprintf(buff, sizeof(buff), "OK");
+		sec->cmd_state = SEC_CMD_STATUS_OK;
+	}
+
+out:
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+}
+
+/*	for game mode 
+	byte[0]: Setting for the Game Mode
+		- 0: Disable
+		- 1: Enable
+*/
+static void set_game_mode(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct fts_ts_info *info = container_of(sec, struct fts_ts_info, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+	u8 regAdd[3];
+	int ret;
+
+	sec_cmd_set_default_result(sec);
+
+	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
+		input_err(true, &info->client->dev,
+				"%s: wrong param %d\n", __func__, sec->cmd_param[0]);
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		goto out;
+	}
+
+	regAdd[0] = 0xC1;
+	regAdd[1] = 0x11;
+	regAdd[2] = sec->cmd_param[0] & 0xFF;
+
+	input_info(true, &info->client->dev, "%s: %s\n",
+			__func__, sec->cmd_param[0] ? "enable" : "disable");
+
+	ret = fts_write_reg(info, regAdd, 3);
+	if (ret < 0) {
+		snprintf(buff, sizeof(buff), "NG");
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+	} else {
+		snprintf(buff, sizeof(buff), "OK");
+		sec->cmd_state = SEC_CMD_STATUS_OK;
+	}
+
+out:
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec->cmd_state = SEC_CMD_STATUS_WAITING;
+	sec_cmd_set_cmd_exit(sec);
 }
 
 #ifdef CONFIG_INPUT_WACOM

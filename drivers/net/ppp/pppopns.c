@@ -78,7 +78,7 @@ static int pppopns_recv_core(struct sock *sk_raw, struct sk_buff *skb)
 	if (skb_linearize(skb))
 		goto drop;
 
-	/* Skip transport header */
+	/* Skip network header */
 	skb_pull(skb, skb_transport_header(skb) - skb->data);
 
 	/* Drop the packet if GRE header is missing. */

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -62,6 +62,7 @@ module_param(enable_debug, int, 0644);
 static bool silent_ssr[N_SSR];
 #define STOP_REASON_0_BIT 0x10
 #define STOP_REASON_1_BIT 0x20
+static bool adsp_silent_ssr;
 
 /* The maximum shutdown timeout is the product of MAX_LOOPS and DELAY_MS. */
 #define SHUTDOWN_ACK_MAX_LOOPS	100
@@ -313,6 +314,8 @@ static ssize_t restart_level_store(struct device *dev,
 
 	for (i = 0; i < ARRAY_SIZE(restart_levels); i++)
 		if (!strncasecmp(buf, restart_levels[i], count)) {
+			pil_ipc("[%s]: change restart level to %d\n",
+				subsys->desc->name, i);
 			subsys->restart_level = i;
 			return orig_count;
 		}
@@ -840,6 +843,7 @@ static int subsystem_powerup(struct subsys_device *dev, void *data)
 	pr_info("[%s:%d]: Powering up %s\n", current->comm, current->pid, name);
 	reinit_completion(&dev->err_ready);
 
+	enable_all_irqs(dev);
 	ret = dev->desc->powerup(dev->desc);
 	if (ret < 0) {
 		notify_each_subsys_device(&dev, 1, SUBSYS_POWERUP_FAILURE,
@@ -855,7 +859,6 @@ static int subsystem_powerup(struct subsys_device *dev, void *data)
 			pr_err("Powerup failure on %s\n", name);
 		return ret;
 	}
-	enable_all_irqs(dev);
 
 	ret = wait_for_err_ready(dev);
 	if (ret) {
@@ -913,7 +916,7 @@ static int subsys_start(struct subsys_device *subsys)
 		subsys_set_state(subsys, SUBSYS_ONLINE);
 		return 0;
 	}
-
+	pil_ipc("[%s]: before wait_for_err_ready\n", subsys->desc->name);
 	ret = wait_for_err_ready(subsys);
 	if (ret) {
 		/* pil-boot succeeded but we need to shutdown
@@ -929,6 +932,7 @@ static int subsys_start(struct subsys_device *subsys)
 
 	notify_each_subsys_device(&subsys, 1, SUBSYS_AFTER_POWERUP,
 								NULL);
+	pil_ipc("[%s]: exit\n", subsys->desc->name);
 	return ret;
 }
 
@@ -936,6 +940,7 @@ static void subsys_stop(struct subsys_device *subsys)
 {
 	const char *name = subsys->desc->name;
 
+	pil_ipc("[%s]: entry\n", subsys->desc->name);
 	notify_each_subsys_device(&subsys, 1, SUBSYS_BEFORE_SHUTDOWN, NULL);
 	reinit_completion(&subsys->shutdown_ack);
 	if (!of_property_read_bool(subsys->desc->dev->of_node,
@@ -955,6 +960,7 @@ static void subsys_stop(struct subsys_device *subsys)
 	subsys_set_state(subsys, SUBSYS_OFFLINE);
 	disable_all_irqs(subsys);
 	notify_each_subsys_device(&subsys, 1, SUBSYS_AFTER_SHUTDOWN, NULL);
+	pil_ipc("[%s]: exit\n", subsys->desc->name);
 }
 
 int subsystem_set_fwname(const char *name, const char *fw_name)
@@ -1371,7 +1377,11 @@ int subsystem_restart_dev(struct subsys_device *dev)
 		subsys_set_modem_silent_ssr(false, ESOC_SSR);
 	}
 
-
+	/* force adsp silent ssr */
+	if (!strncmp(name, "adsp", 4) && adsp_silent_ssr) {
+		dev->restart_level = RESET_SUBSYS_COUPLED;
+		adsp_silent_ssr = false;
+	}
 #ifdef CONFIG_SENSORS_SSC
 	if (!strcmp(name, "slpi")) {
 #if defined(CONFIG_SEC_FACTORY) && defined(CONFIG_SUPPORT_DUAL_6AXIS)
@@ -1506,6 +1516,12 @@ void subsys_set_modem_silent_ssr(bool value, int id)
 			(id == MODEM_SSR) ? "modem" : "esoc", value);
 }
 EXPORT_SYMBOL(subsys_set_modem_silent_ssr);
+
+void subsys_set_adsp_silent_ssr(bool value)
+{
+	adsp_silent_ssr = value;
+}
+EXPORT_SYMBOL(subsys_set_adsp_silent_ssr);
 
 void subsys_force_stop(const char *name, bool val)
 {
@@ -1848,7 +1864,7 @@ static int __get_smem_state(struct subsys_desc *desc, const char *prop,
 		desc->state = qcom_smem_state_get(desc->dev, prop, smem_bit);
 		if (IS_ERR_OR_NULL(desc->state)) {
 			pr_err("Could not get smem-states %s\n", prop);
-			return -ENXIO;
+			return PTR_ERR(desc->state);
 		}
 		return 0;
 	}
@@ -2163,6 +2179,7 @@ err_sysmon_notifier:
 	if (ofnode)
 		subsys_remove_restart_order(ofnode);
 err_register:
+	subsys_char_device_remove(subsys);
 	device_unregister(&subsys->dev);
 	return ERR_PTR(ret);
 }

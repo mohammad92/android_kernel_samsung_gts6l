@@ -1066,6 +1066,8 @@ int fts_systemreset(struct fts_ts_info *info, unsigned int msec)
 
 	rc = fts_wait_for_ready(info);
 
+	fts_release_all_finger(info);
+
 	fts_interrupt_set(info, INT_ENABLE);
 
 	return rc;

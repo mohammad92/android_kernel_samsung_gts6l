@@ -201,11 +201,10 @@ obj-$(CONFIG_ADSP_FACTORY)      += adsp_factory/
 obj-$(CONFIG_ESOC)              += esoc/
 # GNSS driver
 obj-$(CONFIG_GNSS_SIRF)		+= gnsssirf/
+obj-$(CONFIG_GNSS)		+= gnss/
 
 ifeq ($(CONFIG_BATTERY_SAMSUNG_V2), y)
 	obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery_v2/
-else
-	obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery/
 endif
 
 # mobicore
@@ -222,7 +221,7 @@ obj-$(CONFIG_COMBO_REDRIVER_PTN36502)	+= redriver/
 obj-y				+= motor/
 
 # FIVE TEE driver
-obj-$(CONFIG_FIVE_TEE_DRIVER)	+= five/
+obj-$(CONFIG_FIVE_TEE_DRIVER)	+= security/samsung/five_tee_driver/
 obj-$(CONFIG_ICD)		+= security/samsung/icdrv/
 
 # uH
@@ -234,3 +233,13 @@ ifeq ($(CONFIG_GATOR), y)
 endif
 
 obj-y				+= kperfmon/
+
+#TZIC
+obj-y  += security/samsung/tzic/
+
+# SPU signature verify
+obj-$(CONFIG_SPU_VERIFY) += spu_verify/
+
+ifeq ($(CONFIG_PERF_MGR), y)
+	obj-$(CONFIG_PERF_MGR)	+= perf_mgr/
+endif

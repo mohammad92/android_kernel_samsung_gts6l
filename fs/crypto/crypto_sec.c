@@ -175,8 +175,7 @@ static inline int generate_fek(char *raw_key)
  * fscrypt_sec_get_key_aes() - Get a key using AES-256-CBC
  * Return: Zero on success; non-zero otherwise.
  */
-int fscrypt_sec_get_key_aes(const u8 *master_key, const struct fscrypt_context *ctx,
-										u8 *derived_key, unsigned int derived_keysize, u8 *iv_key)
+int fscrypt_sec_get_key_aes(struct fscrypt_info *ci, const u8 *master_key, u8 *iv_key, u8 *derived_key)
 {
 	int res = 0;
 	char derived_key_input[SEC_FS_DERIVED_KEY_INPUT_SIZE];
@@ -184,8 +183,8 @@ int fscrypt_sec_get_key_aes(const u8 *master_key, const struct fscrypt_context *
 	int derived_key_length = 0;
 
 	memcpy(derived_key_input, master_key, SEC_FS_MASTER_KEY_SIZE);
-	memcpy(derived_key_input+SEC_FS_MASTER_KEY_SIZE, ctx->nonce, FS_KEY_DERIVATION_NONCE_SIZE);
-	if((iv_key != NULL) && (ctx->filenames_encryption_mode == FS_ENCRYPTION_MODE_AES_256_CTS)) {
+	memcpy(derived_key_input+SEC_FS_MASTER_KEY_SIZE, ci->ci_nonce, FS_KEY_DERIVATION_NONCE_SIZE);
+	if((iv_key != NULL) && (ci->ci_policy.v1.filenames_encryption_mode == FSCRYPT_MODE_AES_256_CTS)) {
 		memcpy(derived_key_input+SEC_FS_MASTER_KEY_SIZE+FS_KEY_DERIVATION_NONCE_SIZE, "FN",
 					SEC_FS_ENCRYPION_MODE_SIZE);
 	} else {
@@ -208,11 +207,11 @@ int fscrypt_sec_get_key_aes(const u8 *master_key, const struct fscrypt_context *
 		goto out;
 	}
 
-	memcpy(derived_key, derived_key_output, derived_keysize);
+	memcpy(derived_key, derived_key_output, ci->ci_mode->keysize);
 	
-	if((iv_key != NULL) && (ctx->filenames_encryption_mode == FS_ENCRYPTION_MODE_AES_256_CTS)
-		&& (derived_keysize == SEC_FS_AES_256_CTS_CBC_SIZE))
-		memcpy(iv_key, derived_key_output+derived_keysize, FS_CRYPTO_BLOCK_SIZE);
+	if((iv_key != NULL) && (ci->ci_policy.v1.filenames_encryption_mode == FSCRYPT_MODE_AES_256_CTS)
+		&& (ci->ci_mode->keysize == SEC_FS_AES_256_CTS_CBC_SIZE))
+		memcpy(iv_key, derived_key_output+ci->ci_mode->keysize, FS_CRYPTO_BLOCK_SIZE);
 out:
 	memzero_explicit(derived_key_input, SEC_FS_DERIVED_KEY_INPUT_SIZE);
 	memzero_explicit(derived_key_output, SEC_FS_DERIVED_KEY_OUTPUT_SIZE);

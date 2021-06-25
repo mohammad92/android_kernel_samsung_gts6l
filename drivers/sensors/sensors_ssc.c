@@ -296,6 +296,30 @@ static ssize_t slpi_ssr_store(struct kobject *kobj,
 	return count;
 }
 
+void slpi_force_ssr(void)
+{
+	struct subsys_device *sns_dev = NULL;
+	struct platform_device *pdev = slpi_private;
+	struct slpi_loader_private *priv = NULL;
+
+	priv = platform_get_drvdata(pdev);
+	if (!priv)
+		return;
+
+	sns_dev = (struct subsys_device *)priv->pil_h;
+	if (!sns_dev)
+		return;
+
+	subsys_set_fssr(sns_dev, true);
+	/* subsystem_restart_dev has worker queue to handle */
+	if (subsystem_restart_dev(sns_dev) != 0) {
+		dev_err(&pdev->dev, "subsystem_restart_dev failed\n");
+		return;
+	}
+	pr_info("SLPI restarted\n");
+}
+EXPORT_SYMBOL(slpi_force_ssr);
+
 #if defined(CONFIG_SEC_FACTORY) && defined(CONFIG_SUPPORT_DUAL_6AXIS)
 bool is_pretest(void)
 {

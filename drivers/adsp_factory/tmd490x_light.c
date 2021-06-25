@@ -24,13 +24,15 @@
 #endif
 
 #if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
-	defined(CONFIG_SUPPORT_BRIGHT_COMPENSATION_LUX)
+	defined(CONFIG_SUPPORT_BRIGHT_COMPENSATION_LUX) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
 #include <linux/panel_notify.h>
 
 #if defined(CONFIG_SEC_BEYOND0QLTE_PROJECT) || \
 	defined(CONFIG_SEC_BEYOND1QLTE_PROJECT) || \
 	defined(CONFIG_SEC_BEYOND2QLTE_PROJECT) || \
-	defined(CONFIG_SEC_R5Q_PROJECT)
+	(defined(CONFIG_SEC_R5Q_PROJECT) && \
+	!defined(CONFIG_MACH_R5Q_USA_OPEN))
 static unsigned int system_rev __read_mostly;
 
 static int __init sec_hw_rev_setup(char *p)
@@ -173,6 +175,27 @@ static ssize_t light_brightness_store(struct device *dev,
 }
 #endif
 
+#ifdef CONFIG_SUPPORT_SSC_AOD_RECT
+static ssize_t light_set_aod_rect_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int32_t msg_buf[5] = {OPTION_TYPE_SSC_AOD_RECT, 0, 0, 0, 0};
+
+	if (sscanf(buf, "%3d,%3d,%3d,%3d",
+		&msg_buf[1], &msg_buf[2], &msg_buf[3], &msg_buf[4]) != 4) {
+		pr_err("[FACTORY]: %s - The number of data are wrong\n",
+			__func__);
+		return -EINVAL;
+	}
+
+	pr_info("[FACTORY] %s: rect:%d,%d,%d,%d \n", __func__,
+		msg_buf[1], msg_buf[2], msg_buf[3], msg_buf[4]);
+	adsp_unicast(msg_buf, sizeof(msg_buf),
+			MSG_SSC_CORE, 0, MSG_TYPE_OPTION_DEFINE);
+	return size;
+}
+#endif
+
 #if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
 	defined(CONFIG_SUPPORT_BRIGHT_COMPENSATION_LUX)
 int light_panel_data_notify(struct notifier_block *nb,
@@ -209,6 +232,79 @@ static struct notifier_block light_panel_data_notifier = {
 	.priority = 1,
 };
 #endif
+
+#if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
+static ssize_t light_hallic_info_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct adsp_data *data = dev_get_drvdata(dev);
+	uint16_t light_idx = get_light_sidx(data);
+	int32_t msg_buf[2];
+	int new_value;
+
+	if (sysfs_streq(buf, "0"))
+		new_value = 0;
+	else if (sysfs_streq(buf, "1"))
+		new_value = 1;
+	else
+		return size;
+
+	pr_info("[FACTORY] %s: new_value %d\n", __func__, new_value);
+	msg_buf[0] = OPTION_TYPE_SET_HALLIC_INFO;
+	msg_buf[1] = new_value;
+
+	mutex_lock(&data->light_factory_mutex);
+	adsp_unicast(msg_buf, sizeof(msg_buf),
+		light_idx, 0, MSG_TYPE_OPTION_DEFINE);
+	mutex_unlock(&data->light_factory_mutex);
+
+	return size;
+}
+
+static ssize_t light_circle_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+#if defined(CONFIG_SEC_BEYOND0QLTE_PROJECT)
+	if (sec_hw_rev() < 14)
+		return snprintf(buf, PAGE_SIZE, "47.3 1.1 2.3\n");
+	else
+		return snprintf(buf, PAGE_SIZE, "47.3 8.8 2.2\n");
+#elif defined(CONFIG_SEC_BEYOND1QLTE_PROJECT)
+	if (sec_hw_rev() < 14)
+		return snprintf(buf, PAGE_SIZE, "49.5 1.2 2.2\n");
+	else
+		return snprintf(buf, PAGE_SIZE, "49.8 8.6 2.2\n");
+#elif defined(CONFIG_SEC_BEYOND2QLTE_PROJECT)
+	if (sec_hw_rev() < 14)
+		return snprintf(buf, PAGE_SIZE, "48.1 1.0 2.2\n");
+	else
+		return snprintf(buf, PAGE_SIZE, "48.0 8.8 2.2\n");
+#elif defined(CONFIG_SEC_BEYONDXQ_PROJECT)
+	return snprintf(buf, PAGE_SIZE, "26.8 7.3 2.2\n");
+#elif defined(CONFIG_SEC_D1Q_PROJECT) || defined(CONFIG_SEC_D1XQ_PROJECT)
+	return snprintf(buf, PAGE_SIZE, "41.3 7.1 2.4\n");
+#elif defined(CONFIG_SEC_D2Q_PROJECT) || defined(CONFIG_SEC_D2XQ_PROJECT) || defined(CONFIG_SEC_D2XQ2_PROJECT)
+	return snprintf(buf, PAGE_SIZE, "43.8 6.7 2.4\n");
+#elif defined(CONFIG_SEC_R3Q_PROJECT)
+	return snprintf(buf, PAGE_SIZE, "27.1 6.2 2.4\n");
+#elif defined(CONFIG_SEC_R5Q_PROJECT)
+#if defined(CONFIG_MACH_R5Q_USA_OPEN)
+	return snprintf(buf, PAGE_SIZE, "45.4 5.1 2.4\n");
+#else
+	if (sec_hw_rev() < 6)
+		return snprintf(buf, PAGE_SIZE, "31.9 13.8 2.4\n");
+	else
+		return snprintf(buf, PAGE_SIZE, "45.4 5.1 2.4\n");
+#endif
+#elif defined(CONFIG_SEC_BLOOMQ_PROJECT)
+	return snprintf(buf, PAGE_SIZE, "34.1 11.6 2.4\n");
+#else
+	return snprintf(buf, PAGE_SIZE, "0 0 0\n");
+#endif
+}
+#endif
+
 #ifdef CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR
 static ssize_t light_read_copr_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
@@ -396,71 +492,6 @@ static ssize_t light_boled_enable_store(struct device *dev,
 	mutex_unlock(&data->light_factory_mutex);
 
 	return size;
-}
-
-static ssize_t light_hallic_info_store(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t size)
-{
-	struct adsp_data *data = dev_get_drvdata(dev);
-	uint16_t light_idx = get_light_sidx(data);
-	int32_t msg_buf[2];
-	int new_value;
-
-	if (sysfs_streq(buf, "0"))
-		new_value = 0;
-	else if (sysfs_streq(buf, "1"))
-		new_value = 1;
-	else
-		return size;
-
-	pr_info("[FACTORY] %s: new_value %d\n", __func__, new_value);
-	msg_buf[0] = OPTION_TYPE_SET_HALLIC_INFO;
-	msg_buf[1] = new_value;
-
-	mutex_lock(&data->light_factory_mutex);
-	adsp_unicast(msg_buf, sizeof(msg_buf),
-		light_idx, 0, MSG_TYPE_OPTION_DEFINE);
-	mutex_unlock(&data->light_factory_mutex);
-
-	return size;
-}
-
-static ssize_t light_circle_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-#if defined(CONFIG_SEC_BEYOND0QLTE_PROJECT)
-	if (sec_hw_rev() < 14)
-		return snprintf(buf, PAGE_SIZE, "47.3 1.1 2.3\n");
-	else
-		return snprintf(buf, PAGE_SIZE, "47.3 8.8 2.2\n");
-#elif defined(CONFIG_SEC_BEYOND1QLTE_PROJECT)
-	if (sec_hw_rev() < 14)
-		return snprintf(buf, PAGE_SIZE, "49.5 1.2 2.2\n");
-	else
-		return snprintf(buf, PAGE_SIZE, "49.8 8.6 2.2\n");
-#elif defined(CONFIG_SEC_BEYOND2QLTE_PROJECT)
-	if (sec_hw_rev() < 14)
-		return snprintf(buf, PAGE_SIZE, "48.1 1.0 2.2\n");
-	else
-		return snprintf(buf, PAGE_SIZE, "48.0 8.8 2.2\n");
-#elif defined(CONFIG_SEC_BEYONDXQ_PROJECT)
-	return snprintf(buf, PAGE_SIZE, "26.8 7.3 2.2\n");
-#elif defined(CONFIG_SEC_D1Q_PROJECT) || defined(CONFIG_SEC_D1XQ_PROJECT)
-	return snprintf(buf, PAGE_SIZE, "41.3 7.1 2.4\n");
-#elif defined(CONFIG_SEC_D2Q_PROJECT) || defined(CONFIG_SEC_D2XQ_PROJECT) || defined(CONFIG_SEC_D2XQ2_PROJECT)
-	return snprintf(buf, PAGE_SIZE, "43.8 6.7 2.4\n");
-#elif defined(CONFIG_SEC_R3Q_PROJECT)
-	return snprintf(buf, PAGE_SIZE, "27.1 6.2 2.4\n");
-#elif defined(CONFIG_SEC_R5Q_PROJECT)
-	if (sec_hw_rev() < 6)
-		return snprintf(buf, PAGE_SIZE, "31.9 13.8 2.4\n");
-	else
-		return snprintf(buf, PAGE_SIZE, "45.4 5.1 2.4\n");
-#elif defined(CONFIG_SEC_BLOOMQ_PROJECT)
-	return snprintf(buf, PAGE_SIZE, "34.1 11.6 2.4\n");
-#else
-	return snprintf(buf, PAGE_SIZE, "0 0 0\n");
-#endif
 }
 
 static ssize_t light_register_read_show(struct device *dev,
@@ -705,6 +736,9 @@ int light_set_ub_cell_id(char *id_str, bool first_booting)
 
 void light_factory_init_work(struct adsp_data *data)
 {
+#ifdef CONFIG_SUPPORT_SSC_AOD_RECT
+	int32_t rect_msg[5] = {OPTION_TYPE_SSC_AOD_LIGHT_CIRCLE, 546, 170, 576, 200};
+#endif
 #ifdef CONFIG_SUPPORT_TMD4907_FACTORY
 	struct file *cal_filp = NULL;
 	mm_segment_t old_fs;
@@ -801,6 +835,10 @@ void light_factory_init_work(struct adsp_data *data)
 	}
 #else
 	pr_info("[FACTORY] %s : not supported light cal\n", __func__);
+#endif
+#ifdef CONFIG_SUPPORT_SSC_AOD_RECT
+	adsp_unicast(rect_msg, sizeof(rect_msg),
+		MSG_SSC_CORE, 0, MSG_TYPE_OPTION_DEFINE);
 #endif
 }
 
@@ -951,8 +989,6 @@ static ssize_t light_test_show(struct device *dev,
 static DEVICE_ATTR(read_copr, 0664, light_read_copr_show, light_read_copr_store);
 static DEVICE_ATTR(test_copr, 0444, light_test_copr_show, NULL);
 static DEVICE_ATTR(boled_enable, 0220, NULL, light_boled_enable_store);
-static DEVICE_ATTR(hallic_info, 0220, NULL, light_hallic_info_store);
-static DEVICE_ATTR(light_circle, 0444, light_circle_show, NULL);
 static DEVICE_ATTR(copr_roix, 0444, light_copr_roix_show, NULL);
 static DEVICE_ATTR(sensorhub_ddi_spi_check, 0444, light_ddi_spi_check_show, NULL);
 static DEVICE_ATTR(register_write, 0220, NULL, light_register_write_store);
@@ -967,8 +1003,16 @@ static DEVICE_ATTR(name, 0444, light_name_show, NULL);
 static DEVICE_ATTR(lux, 0444, light_raw_data_show, NULL);
 static DEVICE_ATTR(raw_data, 0444, light_raw_data_show, NULL);
 static DEVICE_ATTR(dhr_sensor_info, 0444, light_get_dhr_sensor_info_show, NULL);
+#if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
+static DEVICE_ATTR(hallic_info, 0220, NULL, light_hallic_info_store);
+static DEVICE_ATTR(light_circle, 0444, light_circle_show, NULL);
+#endif
 #if defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
 static DEVICE_ATTR(brightness, 0220, NULL, light_brightness_store);
+#endif
+#ifdef CONFIG_SUPPORT_SSC_AOD_RECT
+static DEVICE_ATTR(set_aod_rect, 0220, NULL, light_set_aod_rect_store);
 #endif
 
 static struct device_attribute *light_attrs[] = {
@@ -977,12 +1021,15 @@ static struct device_attribute *light_attrs[] = {
 	&dev_attr_lux,
 	&dev_attr_raw_data,
 	&dev_attr_dhr_sensor_info,
+#if defined(CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR) || \
+	defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
+	&dev_attr_hallic_info,
+	&dev_attr_light_circle,
+#endif
 #ifdef CONFIG_SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR
 	&dev_attr_read_copr,
 	&dev_attr_test_copr,
 	&dev_attr_boled_enable,
-	&dev_attr_hallic_info,
-	&dev_attr_light_circle,
 	&dev_attr_copr_roix,
 	&dev_attr_register_write,
 	&dev_attr_register_read,
@@ -992,6 +1039,9 @@ static struct device_attribute *light_attrs[] = {
 #endif
 #if defined(CONFIG_SUPPORT_BRIGHT_SYSFS_COMPENSATION_LUX)
 	&dev_attr_brightness,
+#endif
+#ifdef CONFIG_SUPPORT_SSC_AOD_RECT
+	&dev_attr_set_aod_rect,
 #endif
 	NULL,
 };

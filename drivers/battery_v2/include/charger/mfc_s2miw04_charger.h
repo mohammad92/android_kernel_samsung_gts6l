@@ -830,6 +830,7 @@ struct mfc_charger_data {
 	struct device					*dev;
 	mfc_charger_platform_data_t 	*pdata;
 	struct mutex io_lock;
+	struct mutex wpc_en_lock;
 	const struct firmware *firm_data_bin;
 
 	int wc_w_state;
@@ -868,6 +869,9 @@ struct mfc_charger_data {
 	struct delayed_work wpc_tx_duty_min_work;
 	struct delayed_work wpc_tx_phm_work;
 	struct delayed_work wpc_rx_power_work;
+#if defined(CONFIG_SEC_FACTORY)
+	struct delayed_work evt2_err_detect_work;
+#endif
 
 	struct alarm phm_alarm;
 
@@ -909,5 +913,10 @@ struct mfc_charger_data {
 	int input_current;
 	int duty_min;
 	int tx_gear_phm;
+	int wpc_en_flag;
+
+	struct mutex fw_lock;
+	unsigned long fw_size;
+	u8 *fw_img;
 };
 #endif /* __WIRELESS_CHARGER_MFC_S2MIW04_H */

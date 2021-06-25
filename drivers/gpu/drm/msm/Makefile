@@ -8,6 +8,12 @@ ccflags-y += -Idrivers/media/platform/msm/sde/rotator
 ccflags-$(CONFIG_DISPLAY_SAMSUNG) += -Idrivers/gpu/drm/msm/samsung
 ccflags-y += -Idrivers/gpu/drm/msm/hdmi
 ccflags-$(CONFIG_DRM_SDE_SHD) += -Idrivers/gpu/drm/msm/shd
+ccflags-$(CONFIG_DRM_SDE_SHP) += -Idrivers/gpu/drm/msm/shp
+
+ifeq ($(CONFIG_DISPLAY_SAMSUNG_LEGO),y)
+ccflags-y += -I$(srctree)/drivers/clk/qcom/
+ccflags-y += -I$(srctree)/drivers/gpu/drm/msm/samsung_lego
+endif
 
 msm_drm-y := \
 	dp/dp_usbpd.o \
@@ -22,7 +28,11 @@ msm_drm-y := \
 	dp/dp_ctrl.o \
 	dp/dp_audio.o \
 	dp/dp_debug.o \
+	dp/dp_mst_sim_helper.o \
+	dp/dp_mst_sim.o \
 	dp/dp_hpd.o \
+	dp/dp_aux_bridge.o \
+	dp/dp_bridge_hpd.o \
 	dp/dp_gpio_hpd.o \
 	dp/dp_lphw_hpd.o \
 	dp/dp_display.o \
@@ -43,13 +53,13 @@ msm_drm-y := \
 	sde/sde_connector.o \
 	sde/sde_color_processing.o \
 	sde/sde_vbif.o \
-	sde_dbg.o \
-	sde_dbg_evtlog.o \
 	sde_io_util.o \
 	sde/sde_hw_reg_dma_v1_color_proc.o \
 	sde/sde_hw_color_proc_v4.o \
 	sde/sde_hw_ad4.o \
 	sde_edid_parser.o \
+	sde_dbg.o \
+	sde_dbg_evtlog.o \
 	sde_hdcp_1x.o \
 	sde_hdcp_2x.o
 
@@ -202,6 +212,8 @@ msm_drm-$(CONFIG_DRM_SDE_SHD) += shd/shd_drm.o \
 	shd/shd_hw.o \
 	shd/sde_encoder_phys_shd.o
 
+msm_drm-$(CONFIG_DRM_SDE_SHP) += shp/shp_drm.o
+
 msm_drm-$(CONFIG_DRM_MSM) += \
 	msm_atomic.o \
 	msm_drv.o \
@@ -225,5 +237,7 @@ obj-$(CONFIG_DRM_MSM)	+= msm_drm.o
 
 ifeq ($(CONFIG_DISPLAY_SAMSUNG),y)
 obj-y += samsung/
+else ifeq ($(CONFIG_DISPLAY_SAMSUNG_LEGO),y)
+obj-y += samsung_lego/
 endif
 

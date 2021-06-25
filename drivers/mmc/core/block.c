@@ -54,6 +54,7 @@
 #include "block.h"
 #include "core.h"
 #include "card.h"
+#include "crypto.h"
 #include "host.h"
 #include "bus.h"
 #include "mmc_ops.h"
@@ -85,7 +86,7 @@ static int cprm_ake_retry_flag;
 #endif
 #define MODULE_PARAM_PREFIX "mmcblk."
 
-#define MMC_BLK_TIMEOUT_MS  (20 * 1000)        /* 20 sec timeout */
+#define MMC_BLK_TIMEOUT_MS  (10 * 1000)        /* 20 sec timeout */
 #define MMC_SANITIZE_REQ_TIMEOUT 240000
 #define MMC_EXTRACT_INDEX_FROM_ARG(x) ((x & 0x00FF0000) >> 16)
 #define MMC_EXTRACT_VALUE_FROM_ARG(x) ((x & 0x0000FF00) >> 8)
@@ -713,7 +714,7 @@ static int ioctl_do_sanitize(struct mmc_card *card)
 	int err;
 
 	if (!mmc_can_sanitize(card) &&
-			(card->host->caps2 & MMC_CAP2_SANITIZE)) {
+			!(card->host->caps2 & MMC_CAP2_SANITIZE)) {
 		pr_warn("%s: %s - SANITIZE is not supported\n",
 				mmc_hostname(card->host), __func__);
 		err = -EOPNOTSUPP;
@@ -2510,6 +2511,8 @@ static void mmc_blk_data_prep(struct mmc_queue *mq, struct mmc_queue_req *mqrq,
 
 	memset(brq, 0, sizeof(struct mmc_blk_request));
 
+	mmc_crypto_prepare_req(mqrq);
+
 	brq->mrq.data = &brq->data;
 
 	brq->stop.opcode = MMC_STOP_TRANSMISSION;
@@ -4175,7 +4178,7 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	INIT_LIST_HEAD(&md->part);
 	md->usage = 1;
 
-	ret = mmc_init_queue(&md->queue, card, &md->lock, subname, area_type);
+	ret = mmc_init_queue(&md->queue, card, NULL, subname, area_type);
 	if (ret)
 		goto err_putdisk;
 
@@ -4347,7 +4350,6 @@ static void mmc_blk_remove_req(struct mmc_blk_data *md)
 			spin_unlock_irq(md->queue.queue->queue_lock);
 		}
 		blk_set_queue_dying(md->queue.queue);
-		mmc_cleanup_queue(&md->queue);
 
 		if (md->flags & MMC_BLK_CMD_QUEUE)
 			mmc_cmdq_clean(&md->queue, card);
@@ -4368,6 +4370,7 @@ static void mmc_blk_remove_req(struct mmc_blk_data *md)
 
 			del_gendisk(md->disk);
 		}
+		mmc_cleanup_queue(&md->queue);
 		mmc_blk_put(md);
 	}
 }

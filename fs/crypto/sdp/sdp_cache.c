@@ -117,6 +117,7 @@ int fscrypt_sdp_cache_init(void)
 void fscrypt_sdp_cache_add_inode_num(struct inode *inode)
 {
 	struct fscrypt_info *ci = inode->i_crypt_info;//This pointer must be loaded by get_encryption_info completely
+
 	if (ci && ci->ci_sdp_info) {
 		int res = add_entry_locked(ci->ci_sdp_info->engine_id, inode->i_sb, inode->i_ino);
 		if (!res) {
@@ -140,9 +141,8 @@ void fscrypt_sdp_cache_remove_inode_num(struct inode *inode)
 			if (entry->sb == inode->i_sb) {
 				if (entry->ino == inode->i_ino) {
 					list_del(&entry->list);
-					if (ci && ci->ci_sdp_info) {
+					if (ci && ci->ci_sdp_info)
 						ci->ci_sdp_info->sdp_flags &= ~(SDP_IS_INO_CACHED);
-					}
 					spin_unlock(&list_lock);
 					kmem_cache_free(cachep, entry);
 					DEK_LOGD("%s(ino:%lu) sb:%p\n", __func__, inode->i_ino, inode->i_sb);
@@ -229,7 +229,7 @@ static int inode_drop_task(void *arg)
 			DEK_LOGD("%s found ino:%lu sb:%p\n", __func__, entry->ino, entry->sb);
 			ci = inode->i_crypt_info;
 			/*
-			 * Instead of occuring BUG, skip the clearing only
+			 * Instead of occurring BUG, skip the clearing only
 			 * TODO: Must research later whether we can skip the logic in this case
 			BUG_ON(!ci);
 			BUG_ON(!ci->ci_sdp_info);
@@ -252,9 +252,8 @@ static int inode_drop_task(void *arg)
 				DEK_LOGD("May failed to writeback");
 
 			DEK_LOGD("%s invalidating...\n", __func__);
-			if (invalidate_mapping_pages_retry(inode->i_mapping, 0, -1, 3) > 0) {
+			if (invalidate_mapping_pages_retry(inode->i_mapping, 0, -1, 3) > 0)
 				DEK_LOGE("Failed to invalidate entire pages..");
-			}
 			fscrypt_sdp_unset_clearing_ongoing(inode);
 free_icnt:
 			iput(inode);
@@ -295,6 +294,7 @@ int fscrypt_sdp_file_not_readable(struct file *file)
 	if (ci && ci->ci_sdp_info) {
 		if (!S_ISDIR(inode->i_mode) && (ci->ci_sdp_info->sdp_flags & SDP_DEK_IS_SENSITIVE)) {
 			int is_locked = dek_is_locked(ci->ci_sdp_info->engine_id);
+
 			if (is_locked) {
 				wait_file_io_retry(inode);
 				if (filemap_write_and_wait(inode->i_mapping))
@@ -307,11 +307,10 @@ int fscrypt_sdp_file_not_readable(struct file *file)
 				int is_ino_cached = 0;
 
 				spin_lock(&ci->ci_sdp_info->sdp_flag_lock);
-				if (ci->ci_sdp_info->sdp_flags & SDP_IS_CLEARING_ONGOING) {
+				if (ci->ci_sdp_info->sdp_flags & SDP_IS_CLEARING_ONGOING)
 					is_locked = 1;
-				} else {
+				else
 					ci->ci_sdp_info->sdp_flags |= SDP_IS_FILE_IO_ONGOING;
-				}
 				if (ci->ci_sdp_info->sdp_flags & SDP_IS_INO_CACHED)
 					is_ino_cached = 1;
 				spin_unlock(&ci->ci_sdp_info->sdp_flag_lock);
@@ -336,11 +335,10 @@ int fscrypt_sdp_file_not_writable(struct file *file)
 	if (!S_ISDIR(inode->i_mode) && ci && ci->ci_sdp_info &&
 			(ci->ci_sdp_info->sdp_flags & SDP_DEK_IS_SENSITIVE)) {
 		spin_lock(&ci->ci_sdp_info->sdp_flag_lock);
-		if (ci->ci_sdp_info->sdp_flags & SDP_IS_CLEARING_ONGOING) {
+		if (ci->ci_sdp_info->sdp_flags & SDP_IS_CLEARING_ONGOING)
 			retval = -EINVAL;
-		} else {
+		else
 			ci->ci_sdp_info->sdp_flags |= SDP_IS_FILE_IO_ONGOING;
-		}
 		spin_unlock(&ci->ci_sdp_info->sdp_flag_lock);
 	}
 
@@ -353,18 +351,16 @@ void fscrypt_sdp_unset_file_io_ongoing(struct file *file)
 	struct inode *inode = mapping->host;
 	struct fscrypt_info *ci = inode->i_crypt_info;
 
-	if (ci && ci->ci_sdp_info && (ci->ci_sdp_info->sdp_flags & SDP_DEK_IS_SENSITIVE)) {
+	if (ci && ci->ci_sdp_info && (ci->ci_sdp_info->sdp_flags & SDP_DEK_IS_SENSITIVE))
 		ci->ci_sdp_info->sdp_flags &= ~(SDP_IS_FILE_IO_ONGOING);
-	}
 }
 
 void fscrypt_sdp_unset_clearing_ongoing(struct inode *inode)
 {
 	struct fscrypt_info *ci = inode->i_crypt_info;
 
-	if (ci && ci->ci_sdp_info && (ci->ci_sdp_info->sdp_flags & SDP_DEK_IS_SENSITIVE)) {
+	if (ci && ci->ci_sdp_info && (ci->ci_sdp_info->sdp_flags & SDP_DEK_IS_SENSITIVE))
 		ci->ci_sdp_info->sdp_flags &= ~(SDP_IS_CLEARING_ONGOING);
-	}
 }
 
 bool fscrypt_sdp_is_cache_releasable(struct inode *inode)
@@ -399,7 +395,8 @@ bool fscrypt_sdp_is_locked_sensitive_inode(struct inode *inode)
 		return false;
 }
 
-int __fscrypt_sdp_d_delete(const struct dentry *dentry, int dek_is_locked) {
+int __fscrypt_sdp_d_delete(const struct dentry *dentry, int dek_is_locked)
+{
 	struct inode *inode = d_inode(dentry);
 
 	if (inode && dek_is_locked) {
@@ -416,7 +413,8 @@ int __fscrypt_sdp_d_delete(const struct dentry *dentry, int dek_is_locked) {
 }
 EXPORT_SYMBOL(__fscrypt_sdp_d_delete);
 
-int fscrypt_sdp_d_delete_wrapper(const struct dentry *dentry) {
+int fscrypt_sdp_d_delete_wrapper(const struct dentry *dentry)
+{
 struct inode *inode = d_inode(dentry);
 	struct fscrypt_info *ci = inode ? inode->i_crypt_info : NULL;
 #if 1
@@ -431,7 +429,8 @@ struct inode *inode = d_inode(dentry);
 	return 0;
 }
 
-void fscrypt_sdp_drop_inode(struct inode *inode) {
+void fscrypt_sdp_drop_inode(struct inode *inode)
+{
 	inode->i_state |= I_WILL_FREE;
 	spin_unlock(&inode->i_lock);
 	write_inode_now(inode, 1);

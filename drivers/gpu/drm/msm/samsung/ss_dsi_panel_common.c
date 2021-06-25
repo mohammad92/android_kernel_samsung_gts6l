@@ -399,7 +399,7 @@ static void ss_check_te(struct samsung_display_driver_data *vdd)
 	} else
 		LCD_ERR("disp_te_gpio is not valid\n");
 	LCD_INFO("============ end waiting for TE_%d ============\n", vdd->ndx);
-	
+
 	preempt_enable();
 }
 
@@ -2364,6 +2364,13 @@ int ss_panel_off_post(struct samsung_display_driver_data *vdd)
 	vdd->self_disp.time_set = false;
 	vdd->self_disp.on = false;
 
+	if (vdd->finger_mask)
+		vdd->finger_mask = false;
+
+	/* To prevent panel off without finger off */
+	if (vdd->br.finger_mask_hbm_on)
+		vdd->br.finger_mask_hbm_on = false;
+
 	LCD_INFO("- vdd->ndx = %d\n", vdd->ndx);
 	SS_XLOG(SS_XLOG_FINISH);
 
@@ -2817,7 +2824,7 @@ static void ss_panel_parse_dt_ub_con(struct device_node *np,
 
 	ub_con_det->gpio = of_get_named_gpio(np,
 			"samsung,ub-con-det", 0);
-	
+
 	LCD_INFO("request ub_con_det irq for ndx%d\n", vdd->ndx);
 
 	if (gpio_is_valid(ub_con_det->gpio)) {
@@ -3196,7 +3203,7 @@ static void ss_panel_pbaboot_config(struct device_node *np,
 		struct samsung_display_driver_data *vdd)
 {
 	vdd->samsung_enable_splash_pba = of_property_read_bool(np, "samsung,enable_splash_pba");
-	
+
 	LCD_INFO("vdd->samsung_enable_splash_pba %d\n", vdd->samsung_enable_splash_pba);
 	// TODO: set appropriate value to drm display members... not pinfo...
 #if 0
@@ -3417,6 +3424,10 @@ static void ss_panel_parse_dt(struct samsung_display_driver_data *vdd)
 	vdd->dtsi_data.samsung_support_factory_panel_swap = of_property_read_bool(np,
 		"samsung,support_factory_panel_swap");
 
+	vdd->support_window_color = of_property_read_bool(np, "samsung,support_window_color");
+	LCD_INFO("ndx(%d) support_window_color %s\n", vdd->ndx,
+		vdd->support_window_color ? "support" : "not support");
+
 	/* Set tft backlight gpio */
 	for (i = 0; i < MAX_BACKLIGHT_TFT_GPIO; i++) {
 		backlight_tft_gpio[strlen(backlight_tft_gpio) - 1] = '1' + i;
@@ -3540,7 +3551,7 @@ static void ss_panel_parse_dt(struct samsung_display_driver_data *vdd)
 	LCD_INFO("vdd->self_disp.is_support = %d\n", vdd->self_disp.is_support);
 
 	if (vdd->self_disp.is_support) {
-		/* Self Mask Check CRC data */	
+		/* Self Mask Check CRC data */
 		data = of_get_property(np, "samsung,mask_crc_pass_data", &len);
 		if (!data)
 			LCD_ERR("fail to get samsung,mask_crc_pass_data .. \n");
@@ -3658,7 +3669,7 @@ static void ss_panel_parse_dt(struct samsung_display_driver_data *vdd)
 
 	rc = of_property_read_u32(np, "samsung,num_of_data_lanes", tmp);
 	vdd->dtsi_data.num_of_data_lanes = (!rc ? tmp[0] : 4);
-	
+
 
 	if (vdd->dtsi_data.samsung_reduce_display_on_time) {
 		/*
@@ -4591,7 +4602,7 @@ static void set_normal_br_values(struct samsung_display_driver_data *vdd)
 		if (vdd->br.gamma_mode2_support)
 			table = &vdd->dtsi_data.candela_map_table[GAMMA_MODE2_NORMAL][vdd->panel_revision];
 		else if(vdd->br.multi_to_one_support)
-			table = &vdd->dtsi_data.candela_map_table[MULTI_TO_ONE_NORMAL][vdd->panel_revision];			
+			table = &vdd->dtsi_data.candela_map_table[MULTI_TO_ONE_NORMAL][vdd->panel_revision];
 		else
 			table = &vdd->dtsi_data.candela_map_table[NORMAL][vdd->panel_revision];
 	}
@@ -4641,7 +4652,7 @@ static void set_normal_br_values(struct samsung_display_driver_data *vdd)
 
 		LCD_INFO("[DISP_%d] [%d] pac_cd_idx (%d) cd_idx (%d) cd (%d) interpolation_cd (%d)\n", vdd->ndx,
 			p, vdd->br.pac_cd_idx, vdd->br.cd_idx, vdd->br.cd_level, vdd->br.interpolation_cd);
-	} else { 
+	} else {
 		if (vdd->br.gamma_mode2_support) {
 			vdd->br.gamma_mode2_cd = table->gamma_mode2_cd[p];
 			LCD_INFO("[DISP_%d] [%d] cd_idx (%d) cd (%d) panel_real_cd (%d)\n", vdd->ndx,

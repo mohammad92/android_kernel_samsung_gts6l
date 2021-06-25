@@ -2,6 +2,10 @@
 ifeq ($(CONFIG_ARCH_SDM845), y)
 include $(srctree)/techpack/audio/config/sdm845auto.conf
 export
+ifeq ($(CONFIG_ARCH_SDM660), y)
+include $(srctree)/techpack/audio/config/sdm660auto_static.conf
+export
+endif
 endif
 ifeq ($(CONFIG_ARCH_SDM670), y)
 include $(srctree)/techpack/audio/config/sdm670auto_static.conf
@@ -30,6 +34,8 @@ else ifeq ($(CONFIG_SEC_R3Q_PROJECT), y)
 include $(srctree)/techpack/audio/config/sm8150_r3.conf
 else ifeq ($(CONFIG_SEC_R5Q_PROJECT), y)
 include $(srctree)/techpack/audio/config/sm8150_r5.conf
+else ifeq ($(CONFIG_SEC_A82XQ_PROJECT), y)
+include $(srctree)/techpack/audio/config/sm8150_a82.conf
 else
 include $(srctree)/techpack/audio/config/sm8150auto.conf
 endif
@@ -53,6 +59,10 @@ LINUXINCLUDE    += \
 ifeq ($(CONFIG_ARCH_SDM845), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/sdm845autoconf.h
+endif
+ifeq ($(CONFIG_ARCH_SDM660), y)
+LINUXINCLUDE    += \
+                -include $(srctree)/techpack/audio/config/sdm660autoconf.h
 endif
 ifeq ($(CONFIG_ARCH_SDM670), y)
 LINUXINCLUDE    += \
@@ -90,6 +100,9 @@ LINUXINCLUDE	+= \
 else ifeq ($(CONFIG_SEC_R5Q_PROJECT), y)
 LINUXINCLUDE	+= \
                 -include $(srctree)/techpack/audio/config/sm8150_r5.h
+else ifeq ($(CONFIG_SEC_A82XQ_PROJECT), y)
+LINUXINCLUDE	+= \
+                -include $(srctree)/techpack/audio/config/sm8150_a82.h
 else
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/sm8150autoconf.h

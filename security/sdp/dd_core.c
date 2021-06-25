@@ -24,6 +24,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/bio.h>
+#include <linux/bio-crypt-ctx.h>
 
 #include <linux/delay.h>
 #include <linux/kthread.h>
@@ -489,6 +490,9 @@ static void dd_free_pages(struct dd_info *info, struct bio *clone) {
 
 	bio_for_each_segment_all(bv, clone, i) {
 		BUG_ON(!bv->bv_page);
+		if (bv->bv_page->mapping != NULL) {
+			bv->bv_page->mapping = NULL;
+		}
 		mempool_free(bv->bv_page, ctx->page_pool);
 		bv->bv_page = NULL;
 	}
@@ -535,12 +539,14 @@ static struct bio *dd_clone_bio(struct dd_req *req, struct bio *orig, unsigned s
 	unsigned i, len, remaining_size;
 	struct page *page;
 	struct bio_vec *bvec;
+	struct bio_vec *orig_bvec;
 
 retry:
 	if (unlikely(gfp_mask & __GFP_DIRECT_RECLAIM))
 		mutex_lock(&ctx->bio_alloc_lock);
 
 	dd_debug_req("cloning bio", DD_DEBUG_VERBOSE, req);
+
 	clone = bio_alloc_bioset(GFP_NOIO, nr_iovecs, ctx->bio_set);
 	if (!clone) {
 		dd_error("failed to alloc bioset\n");
@@ -550,6 +556,7 @@ retry:
 	clone->bi_private = req;
 	bio_copy_dev(clone, orig);
 	clone->bi_opf = orig->bi_opf;
+	bio_crypt_clone(clone, orig, GFP_NOIO);
 
 	remaining_size = size;
 
@@ -564,8 +571,13 @@ retry:
 
 		len = (unsigned int)((remaining_size > PAGE_SIZE) ? PAGE_SIZE : remaining_size);
 
-		bvec = &clone->bi_io_vec[clone->bi_vcnt++];
+		bvec = &clone->bi_io_vec[clone->bi_vcnt];
+		orig_bvec = &orig->bi_io_vec[clone->bi_vcnt];
+		clone->bi_vcnt++;
 		bvec->bv_page = page;
+		if (i == 0) {
+			bvec->bv_page->mapping = orig_bvec->bv_page->mapping;
+		}
 		bvec->bv_len = len;
 		bvec->bv_offset = 0;
 
@@ -631,7 +643,7 @@ static void dd_decrypt_work(struct work_struct *work) {
 #ifdef CONFIG_SDP_KEY_DUMP
 	if (!dd_policy_skip_decryption_inner_and_outer(req->info->policy.flags)) {
 #endif
-	if (fscrypt_inline_encrypted(req->info->inode)) {
+	if (fscrypt_inode_uses_inline_crypto(req->info->inode)) {
 		dd_verbose("skip oem s/w crypt. hw encryption enabled\n");
 	} else {
 		if (dd_oem_crypto_bio_pages(req, READ, orig)) {
@@ -678,7 +690,7 @@ static void dd_decrypt_work(struct work_struct *work) {
 #ifdef CONFIG_SDP_KEY_DUMP
 		} else {
 			dd_info("skip decryption for inner layer - ino : %ld, flag : 0x%04x\n",
-					__func__, __LINE__, req->info->inode->i_ino, req->info->policy.flags);
+					req->info->inode->i_ino, req->info->policy.flags);
 		}
 #endif
 		dd_req_state(req, DD_REQ_SUBMITTED);
@@ -745,9 +757,9 @@ int dd_submit_bio(struct dd_info *info, struct bio *bio) {
 				goto err_out;
 			}
 
-			if (fscrypt_inline_encrypted(req->info->inode)) {
+			if (fscrypt_inode_uses_inline_crypto(req->info->inode)) {
 				dd_verbose("skip oem s/w crypt. hw encryption enabled\n");
-				fscrypt_set_bio_cryptd(req->info->inode, req->u.bio.clone);
+//				fscrypt_set_ice_dun(req->info->inode, req->u.bio.clone, 0/* temporary */);
 			} else {
 				if (dd_oem_crypto_bio_pages(req, WRITE, req->u.bio.clone)) {
 					dd_error("failed oem crypto\n");
@@ -775,12 +787,19 @@ int dd_submit_bio(struct dd_info *info, struct bio *bio) {
 #ifdef CONFIG_SDP_KEY_DUMP
 		if (!dd_policy_skip_decryption_inner_and_outer(req->info->policy.flags)) {
 #endif
-		if (fscrypt_inline_encrypted(req->info->inode))
-			fscrypt_set_bio_cryptd(req->info->inode, req->u.bio.clone);
+		if (fscrypt_inode_uses_inline_crypto(req->info->inode)) {
+			dd_verbose("skip oem s/w crypt. hw encryption enabled\n");
+//			fscrypt_set_ice_dun(req->info->inode, req->u.bio.clone, 0/* temporary */);
+		}
 #ifdef CONFIG_SDP_KEY_DUMP
 		} else {
-			req->u.bio.clone->bi_opf = 0;
-			req->u.bio.clone->bi_cryptd = NULL;
+			if (fscrypt_inode_uses_inline_crypto(req->info->inode)) {
+				struct bio_crypt_ctx *bc = req->u.bio.clone->bi_crypt_context;
+				req->u.bio.clone->bi_crypt_context = NULL;
+				dd_info("skip h/w decryption for ino(%ld)\n", req->info->inode->i_ino);
+				if (bc)
+					bio_crypt_free_ctx(req->u.bio.clone);
+			}
 		}
 #endif
 
@@ -839,7 +858,7 @@ int dd_page_crypto(struct dd_info *info, dd_crypto_direction_t dir,
 	req->u.page.dst_page = dst_page;
 
 	if (dir == DD_DECRYPT) {
-		if (fscrypt_inline_encrypted(req->info->inode)) {
+		if (fscrypt_inode_uses_inline_crypto(req->info->inode)) {
 			dd_verbose("skip oem s/w crypt. hw encryption enabled\n");
 		} else {
 			err = dd_oem_page_crypto_inplace(info, src_page, READ);
@@ -1214,7 +1233,9 @@ static dd_transaction_result __process_page_request_locked(
 
 	p = __get_next_user_req(t->control);
 	if(!p) {
+		spin_unlock(&proc->lock);
 		t->control = __get_next_ctr_page(t);
+		spin_lock(&proc->lock);
 		p = __get_next_user_req(t->control);
 	}
 
@@ -1270,8 +1291,10 @@ __acquires(proc->lock)
 			break;
 		}
 
+		spin_unlock(&proc->lock);
 		if(!t->control || __is_ctr_page_full(t->control))
 			t->control = __get_next_ctr_page(t);
+		spin_lock(&proc->lock);
 
 		dd_debug_req("req <processing>", DD_DEBUG_PROCESS, req);
 		dd_verbose("retrieve req [unique:%d] [code:%d] [ino:%ld] [num_pg:%d] [num_md:%d] [num_ctr:%d]\n",
@@ -1405,9 +1428,9 @@ long dd_ioctl_submit_crypto_result(struct dd_proc *proc,
 				if (dir == WRITE) {
 					dd_dump_bio_pages("inner encryption done", req->u.bio.clone);
 
-					if (fscrypt_inline_encrypted(req->info->inode)) {
+					if (fscrypt_inode_uses_inline_crypto(req->info->inode)) {
 						dd_verbose("skip oem s/w crypt. hw encryption enabled\n");
-						fscrypt_set_bio_cryptd(req->info->inode, req->u.bio.clone);
+//						fscrypt_set_ice_dun(req->info->inode, req->u.bio.clone, 0/* temporary */);
 					} else {
 						if (dd_oem_crypto_bio_pages(req, WRITE, req->u.bio.clone)) {
 							abort_req(__func__, req, -EIO);
@@ -1705,6 +1728,38 @@ static long dd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		return 0;
 	}
+	case DD_IOCTL_TRACE_DDAR_FILE: {
+#ifdef CONFIG_SDP_KEY_DUMP
+		struct fd f = { NULL, 0 };
+		struct inode *inode;
+		struct dd_crypt_context crypt_context;
+
+		dd_info("DD_IOCTL_TRACE_DDAR_FILE");
+
+		f = fdget(ioc.u.dump_key.fileDescriptor);
+		if (unlikely(f.file == NULL)) {
+			dd_error("invalid fd : %d\n", ioc.u.dump_key.fileDescriptor);
+			return -EINVAL;
+		}
+		inode = f.file->f_path.dentry->d_inode;
+		if (!inode) {
+			dd_error("invalid inode address\n");
+			return -EBADF;
+		}
+		if (dd_read_crypt_context(inode, &crypt_context) != sizeof(struct dd_crypt_context)) {
+			dd_error("failed to read dd crypt context - ino:%ld\n", inode->i_ino);
+			return -EINVAL;
+		}
+		crypt_context.policy.flags |= DD_POLICY_TRACE_FILE;
+		if (dd_write_crypt_context(inode, &crypt_context, NULL)) {
+			dd_error("failed to write dd crypt context - ino:%ld\n", inode->i_ino);
+		}
+		fscrypt_dd_trace_inode(inode);
+		dd_info("updated policy - ino:%ld\n", inode->i_ino);
+#endif
+
+		return 0;
+	}
 	case DD_IOCTL_DUMP_REQ_LIST:
 	{
 		dd_info("DD_IOCTL_DUMP_REQ_LIST");
@@ -1767,7 +1822,7 @@ static long dd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		req = find_req(proc, DD_REQ_PROCESSING, ioc.u.xattr.ino);
 		if (!req) {
-			dd_error("request not found for ino:%ld! unique:%d\n", req->ino, req->unique);
+			dd_error("request not found for ino:%ld!\n", ioc.u.xattr.ino);
 			return -EBADF;
 		}
 		inode = req->info->inode;
@@ -1808,7 +1863,7 @@ static long dd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		req = find_req(proc, DD_REQ_PROCESSING, ioc.u.xattr.ino);
 		if (!req) {
-			dd_error("request not found for ino:%ld! unique:%d\n", req->ino, req->unique);
+			dd_error("request not found for ino:%ld!\n", ioc.u.xattr.ino);
 			kfree(ioc_work);
 			return -EBADF;
 		}
@@ -1914,7 +1969,10 @@ enforce:
 
 		for (i = 0; i < group_info->ngroups; i++) {
 			kgid_t gid = group_info->gid[i];
-			snprintf(msg, 128, "%s %d", msg, gid.val);
+			if (gid.val == AID_VENDOR_DDAR_DE_ACCESS) {
+				snprintf(msg, 128, "%s %d", msg, gid.val);
+				break;
+			}
 		}
 		dd_info("%s\n", msg);
 	}
@@ -2103,11 +2161,36 @@ void dd_init_context(const char *name) {
 	}
 }
 
+atomic64_t dd_count;
+
+void set_ddar_count(long count)
+{
+	atomic64_set(&dd_count, count);
+}
+
+long get_ddar_count(void)
+{
+	long count = atomic64_read(&dd_count);
+	return count;
+}
+
+void inc_ddar_count(void)
+{
+	atomic64_inc(&dd_count);
+}
+
+void dec_ddar_count(void)
+{
+	atomic64_dec(&dd_count);
+}
+
 static int __init dd_init(void)
 {
 	int err = -ENOMEM;
 
 	BUG_ON(sizeof(struct metadata_hdr) != METADATA_HEADER_LEN);
+
+	set_ddar_count(0);
 
 	dd_free_req_workqueue = alloc_workqueue("dd_free_req_workqueue", WQ_HIGHPRI, 0);
 	if (!dd_free_req_workqueue)

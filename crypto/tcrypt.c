@@ -2066,7 +2066,7 @@ static int do_test(const char *alg, u32 type, u32 mask, int m)
 		ret += alg_test("ecb(aes-generic)", "ecb(aes)", 0, 0);
 		ret += alg_test("cbc(aes-generic)", "cbc(aes)", 0, 0);
 	#ifdef CONFIG_CRYPTO_GCM
-		ret += alg_test("gcm(aes-generic)", "gcm(aes)", 0, 0);
+		ret += alg_test("gcm_base(ctr(aes-generic),ghash-generic)", "gcm(aes)", 0, 0);
 	#endif
 #endif
 
@@ -2074,7 +2074,7 @@ static int do_test(const char *alg, u32 type, u32 mask, int m)
 		ret += alg_test("ecb(aes-ce)", "ecb(aes)", 0, 0);
 		ret += alg_test("cbc(aes-ce)", "cbc(aes)", 0, 0);
 	#ifdef CONFIG_CRYPTO_GCM
-		ret += alg_test("gcm(aes-ce)", "gcm(aes)", 0, 0);
+		ret += alg_test("gcm_base(ctr(aes-ce),ghash-generic)", "gcm(aes)", 0, 0);
 	#endif
 #endif
 

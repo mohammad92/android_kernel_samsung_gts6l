@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -43,6 +43,7 @@
 
 #ifdef CONFIG_SEC_DISPLAYPORT
 #include <linux/switch.h>
+#include <linux/string.h>
 #include <linux/reboot.h>
 #include <linux/sec_displayport.h>
 #ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
@@ -117,7 +118,9 @@ struct dp_display_private {
 	atomic_t aborted;
 
 	struct platform_device *pdev;
+	struct usbpd *pd;
 	struct device_node *aux_switch_node;		/* SECDP: not used, dummy */
+	struct msm_dp_aux_bridge *aux_bridge;
 	struct dentry *root;
 	struct completion notification_comp;
 
@@ -398,7 +401,240 @@ static enum dex_support_res_t secdp_check_adapter_type(uint64_t ven_id, uint64_t
 
 end:
 	pr_info("type: %s\n", secdp_dex_res_to_string(type));
+	dp->sec.adapter.ven_id = ven_id;
+	dp->sec.adapter.prod_id = prod_id;
 	return type;
+}
+
+enum {
+	DEX_HMD_MON = 0,	/* monitor name field */
+	DEX_HMD_VID,		/* vid field */
+	DEX_HMD_PID,		/* pid field */
+	DEX_HMD_FIELD_MAX,
+};
+
+/**
+ * convert VID/PID string to uint in hexadecimal
+ * @tok		[in] 4bytes, char
+ * @result	[inout] converted value
+ */
+static int _secdp_strtoint(char *tok, uint *result)
+{
+	int ret = 0, len;
+
+	if (!tok || !result) {
+		pr_err("invalid arg!\n");
+		ret = -EINVAL;
+		goto end;
+	}
+
+	len = strlen(tok);
+	if (len == 5 && tok[len - 1] == 0xa/*LF*/) {
+		/* continue since it's ended with line feed */
+	} else if ((len == 4 && tok[len - 1] == 0xa/*LF*/) || (len != 4)) {
+		pr_err("wrong! tok:%s, len:%d\n", tok, len);
+		ret = -EINVAL;
+		goto end;
+	}
+
+	ret = kstrtouint(tok, 16, result);
+	if (ret) {
+		pr_err("fail to convert %s! ret:%d\n", tok, ret);
+		goto end;
+	}
+end:
+	return ret;
+}
+
+#ifdef CONFIG_SEC_DISPLAYPORT_ENG
+int secdp_show_hmd_dev(char *buf)
+{
+	struct dp_display_private *dp = g_secdp_priv;
+	struct secdp_sink_dev  *hmd_list;
+	int i, rc = 0;
+
+	hmd_list = dp->sec.hmd_list;
+	if (!hmd_list) {
+		pr_err("hmd_list is null!\n");
+		rc = -ENOMEM;
+		goto end;
+	}
+
+	for (i = 0; i < MAX_NUM_HMD; i++) {
+		if (strlen(hmd_list[i].monitor_name) > 0) {
+			if (buf) {
+				rc += scnprintf(buf + rc, PAGE_SIZE - rc,
+						"%s,0x%04x,0x%04x\n",
+						hmd_list[i].monitor_name,
+						hmd_list[i].ven_id,
+						hmd_list[i].prod_id);
+			}
+			/*
+			pr_info("%s, 0x%04x, 0x%04x\n",
+				hmd_list[i].monitor_name,
+				hmd_list[i].ven_id,
+				hmd_list[i].prod_id);
+			*/
+		}
+	}
+
+end:
+	return rc;
+}
+#endif
+
+int secdp_store_hmd_dev(char *str, size_t len, int num_hmd)
+{
+	struct dp_display_private *dp = g_secdp_priv;
+	struct secdp_sink_dev *hmd_list;
+	struct secdp_sink_dev hmd_bak[MAX_NUM_HMD] = {0,};
+	bool backup = false;
+	char *tok;
+	int  i, j, ret = 0, rmdr;
+	uint value;
+
+	if (num_hmd <= 0 || num_hmd > MAX_NUM_HMD) {
+		pr_err("invalid num_hmd! %d\n", num_hmd);
+		ret = -EINVAL;
+		goto end;
+	}
+
+	hmd_list = dp->sec.hmd_list;
+	if (!hmd_list) {
+		pr_err("hmd_list is null!\n");
+		ret = -ENOMEM;
+		goto end;
+	}
+
+	pr_info("+++ %s, %lu, %d\n", str, len, num_hmd);
+
+	/* backup and reset */
+	for (j = 0; j < MAX_NUM_HMD; j++) {
+		memcpy(&hmd_bak[j], &hmd_list[j], sizeof(struct secdp_sink_dev));
+		memset(&hmd_list[j], 0, sizeof(struct secdp_sink_dev));
+	}
+	backup = true;
+
+	tok = strsep(&str, ",");
+	i = 0, j = 0;
+	while (tok != NULL && *tok != 0xa/*LF*/) {
+		if (i > num_hmd * DEX_HMD_FIELD_MAX) {
+			pr_err("num of tok cannot exceed <%dx%d>!\n",
+				num_hmd, DEX_HMD_FIELD_MAX);
+			break;
+		}
+		if (j > MAX_NUM_HMD) {
+			pr_err("num of HMD cannot exceed %d!\n", MAX_NUM_HMD);
+			break;
+		}
+
+		rmdr = i % DEX_HMD_FIELD_MAX;
+
+		switch (rmdr) {
+		case DEX_HMD_MON:
+			strlcpy(hmd_list[j].monitor_name, tok, MON_NAME_LEN);
+			break;
+
+		case DEX_HMD_VID:
+		case DEX_HMD_PID:
+			ret = _secdp_strtoint(tok, &value);
+			if (ret)
+				goto end;
+
+			if (rmdr == DEX_HMD_VID) {
+				hmd_list[j].ven_id  = value;
+			} else {
+				hmd_list[j].prod_id = value;
+				j++;	/* move next */
+			}
+			break;
+		}
+
+		tok = strsep(&str, ",");
+		i++;
+	}
+
+	for (j = 0; j < MAX_NUM_HMD; j++) {
+		if (strlen(hmd_list[j].monitor_name) > 0)
+			pr_info("%s,0x%04x,0x%04x\n",
+				hmd_list[j].monitor_name,
+				hmd_list[j].ven_id,
+				hmd_list[j].prod_id);
+	}
+
+end:
+	if (backup && ret) {
+		pr_info("restore hmd list!\n");
+		for (j = 0; j < MAX_NUM_HMD; j++) {
+			memcpy(&hmd_list[j], &hmd_bak[j],
+				sizeof(struct secdp_sink_dev));
+		}
+	}
+	return ret;
+}
+
+/**
+ * check if connected sink is HMD device from hmd_list or not
+ */
+static bool _secdp_check_hmd_dev(struct dp_display_private *dp,
+		const struct secdp_sink_dev *hmd)
+{
+	bool ret = false;
+
+	if (!dp || !hmd) {
+		pr_err("invalid args!\n");
+		goto end;
+	}
+
+	if (dp->sec.adapter.ven_id != hmd->ven_id)
+		goto end;
+
+	if (dp->sec.adapter.prod_id != hmd->prod_id)
+		goto end;
+
+	if (strncmp(dp->panel->monitor_name, hmd->monitor_name,
+			strlen(dp->panel->monitor_name)))
+		goto end;
+
+	ret = true;
+end:
+	return ret;
+}
+
+/**
+ * check if connected sink is predefined HMD(AR/VR) device or not
+ * @param	string to search
+ *              if NULL, check if one of HMD devices in list are connected
+ * @retval	true if found, false otherwise
+ */
+bool secdp_check_hmd_dev(const char *name_to_search)
+{
+	struct dp_display_private *dp = g_secdp_priv;
+	struct secdp_sink_dev *hmd = dp->sec.hmd_list;
+	int  i, list_size;
+	bool found = false;
+
+	mutex_lock(&dp->sec.hmd_lock);
+
+	list_size = MAX_NUM_HMD;
+
+	for (i = 0; i < list_size; i++) {
+		if (name_to_search != NULL &&
+				strncmp(name_to_search, hmd[i].monitor_name,
+					strlen(name_to_search)))
+			continue;
+
+		found = _secdp_check_hmd_dev(dp, &hmd[i]);
+		if (found)
+			break;
+	}
+
+	if (found)
+		pr_info("hmd <%s>\n", hmd[i].monitor_name);
+
+	mutex_unlock(&dp->sec.hmd_lock);
+
+	return found;
 }
 #endif
 
@@ -1112,7 +1348,6 @@ static void dp_display_process_mst_hpd_high(struct dp_display_private *dp,
 						bool mst_probe)
 {
 	bool is_mst_receiver;
-	struct dp_mst_hpd_info info;
 	const int clear_mstm_ctrl_timeout = 100000;
 	u8 old_mstm_ctrl;
 	int ret;
@@ -1155,12 +1390,8 @@ static void dp_display_process_mst_hpd_high(struct dp_display_private *dp,
 
 		dp_display_update_mst_state(dp, true);
 	} else if (dp->mst.mst_active && mst_probe) {
-		info.mst_protocol = dp->parser->has_mst_sideband;
-		info.mst_port_cnt = dp->debug->mst_port_cnt;
-		info.edid = dp->debug->get_edid(dp->debug);
-
 		if (dp->mst.cbs.hpd)
-			dp->mst.cbs.hpd(&dp->dp_display, true, &info);
+			dp->mst.cbs.hpd(&dp->dp_display, true);
 	}
 
 	DP_MST_DEBUG("mst_hpd_high. mst_active:%d\n", dp->mst.mst_active);
@@ -1288,8 +1519,10 @@ static int dp_display_process_hpd_high(struct dp_display_private *dp)
 		goto notify;
 	}
 	dp->sec.dex.prev = secdp_check_dex_mode();
-	pr_info("dex.setting_ui: %d, dex.curr: %d\n", dp->sec.dex.setting_ui, dp->sec.dex.curr);
+	pr_info("dex.setting_ui: %d, dex.curr: %d\n",
+		dp->sec.dex.setting_ui, dp->sec.dex.curr);
 	secdp_read_branch_revision(dp);
+	dp->sec.hmd_dev = secdp_check_hmd_dev(NULL);
 #endif
 
 #ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
@@ -1363,15 +1596,12 @@ off:
 
 static void dp_display_process_mst_hpd_low(struct dp_display_private *dp)
 {
-	struct dp_mst_hpd_info info = {0};
-
 	if (dp->mst.mst_active) {
 		DP_MST_DEBUG("mst_hpd_low work\n");
 
-		if (dp->mst.cbs.hpd) {
-			info.mst_protocol = dp->parser->has_mst_sideband;
-			dp->mst.cbs.hpd(&dp->dp_display, false, &info);
-		}
+		if (dp->mst.cbs.hpd)
+			dp->mst.cbs.hpd(&dp->dp_display, false);
+
 		dp_display_update_mst_state(dp, false);
 	}
 
@@ -1467,6 +1697,7 @@ void secdp_dex_do_reconnecting(void)
 	mutex_lock(&dp->attention_lock);
 	pr_info("dex_reconnect hpd low++\n");
 	dp->sec.dex.reconnecting = 1;
+	dp->sec.dex.dex_node_status = DEX_DURING_MODE_CHANGE;
 
 	if (dp->sec.dex.curr == DEX_ENABLED)
 		dp->sec.dex.curr = DEX_DURING_MODE_CHANGE;
@@ -1525,7 +1756,6 @@ enum dex_support_res_t secdp_get_dex_res(void)
 }
 #endif
 
-#ifndef CONFIG_SEC_DISPLAYPORT
 static int dp_display_usbpd_configure_cb(struct device *dev)
 {
 	int rc = 0;
@@ -1544,30 +1774,25 @@ static int dp_display_usbpd_configure_cb(struct device *dev)
 		goto end;
 	}
 
-	if (!dp->debug->sim_mode && !dp->parser->no_aux_switch
-	    && !dp->parser->gpio_aux_switch) {
-		rc = dp->aux->aux_switch(dp->aux, true, dp->hpd->orientation);
-		if (rc)
-			goto end;
+	/*
+	 * When dp is connected during boot, there is a chance that
+	 * configure_cb is called before drm probe is finished and
+	 * cause host_init failure. Here we poll the value of
+	 * poll_enabled and wait until drm driver is ready.
+	 */
+	if (!dp->dp_display.drm_dev->mode_config.poll_enabled) {
+		const int poll_timeout = 10000;
+		int i;
+
+		for (i = 0; !dp->dp_display.drm_dev->mode_config.poll_enabled &&
+				i < poll_timeout; i++)
+			usleep_range(1000, 1100);
+
+		if (i == poll_timeout) {
+			pr_err("driver is not loaded\n");
+			rc = -ENODEV;
+		}
 	}
-
-	mutex_lock(&dp->session_lock);
-	dp_display_host_init(dp);
-
-	/* check for hpd high */
-	if (dp->hpd->hpd_high)
-		queue_work(dp->wq, &dp->connect_work);
-	else
-		dp->process_hpd_connect = true;
-	mutex_unlock(&dp->session_lock);
-end:
-	return rc;
-}
-#else
-static int secdp_display_usbpd_configure_cb(void)
-{
-	int rc = 0;
-	struct dp_display_private *dp = g_secdp_priv;
 
 	pr_debug("+++\n");
 
@@ -1590,7 +1815,6 @@ static int secdp_display_usbpd_configure_cb(void)
 end:
 	return rc;
 }
-#endif
 
 static int dp_display_stream_pre_disable(struct dp_display_private *dp,
 			struct dp_panel *dp_panel)
@@ -1673,7 +1897,7 @@ static int dp_display_handle_disconnect(struct dp_display_private *dp)
 	}
 
 	mutex_lock(&dp->session_lock);
-	if (rc && dp->power_on)
+	if (dp->power_on)
 		dp_display_clean(dp);
 
 	dp_display_host_deinit(dp);
@@ -1711,7 +1935,6 @@ static void dp_display_disconnect_sync(struct dp_display_private *dp)
 	atomic_set(&dp->aborted, 0);
 }
 
-#ifndef CONFIG_SEC_DISPLAYPORT
 static int dp_display_usbpd_disconnect_cb(struct device *dev)
 {
 	int rc = 0;
@@ -1730,31 +1953,7 @@ static int dp_display_usbpd_disconnect_cb(struct device *dev)
 		goto end;
 	}
 
-	mutex_lock(&dp->session_lock);
-	if (dp->debug->psm_enabled && dp->core_initialized)
-		dp->link->psm_config(dp->link, &dp->panel->link_info, true);
-	mutex_unlock(&dp->session_lock);
-
-	dp_display_disconnect_sync(dp);
-
-	if (!dp->debug->sim_mode && !dp->parser->no_aux_switch
-	    && !dp->parser->gpio_aux_switch)
-		dp->aux->aux_switch(dp->aux, false, ORIENTATION_NONE);
-end:
-	return rc;
-}
-#else
-static int secdp_display_usbpd_disconnect_cb(void)
-{
-	int rc = 0;
-	struct dp_display_private *dp = g_secdp_priv;
-
-	if (!dp) {
-		pr_err("no driver data found\n");
-		rc = -ENODEV;
-		goto end;
-	}
-
+#ifdef CONFIG_SEC_DISPLAYPORT
 	pr_debug("+++, psm(%d)\n", dp->debug->psm_enabled);
 
 	if (atomic_read(&dp->notification_status)) {
@@ -1767,29 +1966,32 @@ static int secdp_display_usbpd_disconnect_cb(void)
 		}
 		pr_info("wait for connection logic--\n");
 	}
+#endif
 
 	mutex_lock(&dp->session_lock);
 	if (dp->debug->psm_enabled && dp->core_initialized)
 		dp->link->psm_config(dp->link, &dp->panel->link_info, true);
 	mutex_unlock(&dp->session_lock);
 
+#ifdef CONFIG_SEC_DISPLAYPORT
 	/* cancel any pending request */
 	atomic_set(&dp->aborted, 1);
+#endif
 
 	dp_display_disconnect_sync(dp);
 
 	if (!dp->debug->sim_mode && !dp->parser->no_aux_switch
 	    && !dp->parser->gpio_aux_switch)
 		dp->aux->aux_switch(dp->aux, false, ORIENTATION_NONE);
-
+#ifdef CONFIG_SEC_DISPLAYPORT
 	/* needed here because it's set at "dp_display_disconnect_sync()" above */
 	atomic_set(&dp->notification_status, 0);
 	complete(&dp->dp_off_comp);
-end:
 	pr_debug("---\n");
+#endif
+end:
 	return rc;
 }
-#endif
 
 static int dp_display_stream_enable(struct dp_display_private *dp,
 			struct dp_panel *dp_panel)
@@ -1813,13 +2015,8 @@ static int dp_display_stream_enable(struct dp_display_private *dp,
 
 static void dp_display_mst_attention(struct dp_display_private *dp)
 {
-	struct dp_mst_hpd_info hpd_irq = {0};
-
-	if (dp->mst.mst_active && dp->mst.cbs.hpd_irq) {
-		hpd_irq.mst_hpd_sim = dp->debug->mst_hpd_sim;
-		dp->mst.cbs.hpd_irq(&dp->dp_display, &hpd_irq);
-		dp->debug->mst_hpd_sim = false;
-	}
+	if (dp->mst.mst_active && dp->mst.cbs.hpd_irq)
+		dp->mst.cbs.hpd_irq(&dp->dp_display);
 
 	DP_MST_DEBUG("mst_attention_work. mst_active:%d\n", dp->mst.mst_active);
 }
@@ -1907,14 +2104,13 @@ mst_attention:
 #ifdef CONFIG_SEC_DISPLAYPORT
 	if (dp->link->status_update_cnt > 9 && !dp->link->poor_connection) {
 		dp->link->poor_connection = true; 
-		dp->sec.dex.prev = dp->sec.dex.curr = DEX_DISABLED;
+		dp->sec.dex.dex_node_status = dp->sec.dex.prev = dp->sec.dex.curr = DEX_DISABLED;
 		schedule_delayed_work(&dp->sec.link_status_work,
 							msecs_to_jiffies(10));
 	}
 #endif
 }
 
-#ifndef CONFIG_SEC_DISPLAYPORT
 static int dp_display_usbpd_attention_cb(struct device *dev)
 {
 	struct dp_display_private *dp;
@@ -1934,6 +2130,7 @@ static int dp_display_usbpd_attention_cb(struct device *dev)
 			dp->hpd->hpd_irq, dp->hpd->hpd_high,
 			dp->power_on, dp->is_connected);
 
+#ifndef CONFIG_SEC_DISPLAYPORT
 	if (!dp->hpd->hpd_high)
 		dp_display_disconnect_sync(dp);
 	else if ((dp->hpd->hpd_irq && dp->core_initialized) ||
@@ -1943,10 +2140,12 @@ static int dp_display_usbpd_attention_cb(struct device *dev)
 		queue_work(dp->wq, &dp->connect_work);
 	else
 		pr_debug("ignored\n");
+#endif
 
 	return 0;
 }
-#else
+
+#ifdef CONFIG_SEC_DISPLAYPORT
 static int secdp_event_thread(void *data)
 {
 	unsigned long flag;
@@ -2050,7 +2249,7 @@ static void secdp_process_attention(struct dp_display_private *dp,
 	if (noti->id == CCIC_NOTIFY_ID_DP_CONNECT && noti->sub1 == CCIC_NOTIFY_DETACH) {
 		dp->hpd->hpd_high = false;
 
-		rc = secdp_display_usbpd_disconnect_cb();
+		rc = dp_display_usbpd_disconnect_cb(&dp->pdev->dev);
 		goto end;
 	}
 
@@ -2101,9 +2300,8 @@ static void secdp_process_attention(struct dp_display_private *dp,
 	}
 
 	if (noti->id == CCIC_NOTIFY_ID_DP_HPD && noti->sub1 == CCIC_NOTIFY_LOW) {
-		dp->sec.dex.prev = dp->sec.dex.curr = DEX_DISABLED;
+		dp->sec.dex.dex_node_status = dp->sec.dex.prev = dp->sec.dex.curr = DEX_DISABLED;
 		secdp_clear_link_status_update_cnt(dp->link);
-
 		dp_display_disconnect_sync(dp);
 		goto end;
 	}
@@ -2117,7 +2315,6 @@ handle_hpd_high:
 		secdp_clear_link_status_update_cnt(dp->link);
 		queue_work(dp->wq, &dp->connect_work);
 	}
-
 end:
 	return;
 }
@@ -2137,10 +2334,8 @@ static void secdp_handle_attention(struct dp_display_private *dp)
 
 		secdp_process_attention(dp, &node->noti);
 
-#ifdef CONFIG_SEC_DISPLAYPORT
 		/* add some delay to guarantee hpd event handling in framework side */
 		msleep(60);
-#endif
 
 		list_del(&node->list);
 		mutex_unlock(&dp->attention_lock);
@@ -2191,6 +2386,43 @@ void secdp_self_test_hdcp_off(void)
 }	
 #endif
 
+static void secdp_ccic_connect_init(struct dp_display_private *dp,
+		CC_NOTI_TYPEDEF *noti, bool connect)
+{
+	dp->sec.cable_connected = dp->hpd->alt_mode_cfg_done = connect;
+	dp->hpd->orientation    = connect ?
+		secdp_get_plug_orientation() : ORIENTATION_NONE;
+
+	dp->hpd->multi_func     = false;
+	dp->sec.link_conf       = false;
+	dp->sec.hdcp_retry      = 0;
+	dp->sec.prefer_ratio    = MON_RATIO_NA;
+
+	/* set flags here as soon as disconnected
+	 * resource clear will be made later at "secdp_process_attention" */
+	dp->sec.dex.res = connect ?
+		secdp_check_adapter_type(noti->sub2, noti->sub3) : DEX_RES_NOT_SUPPORT;
+	dp->sec.dex.prev = dp->sec.dex.curr = dp->sec.dex.dex_node_status = DEX_DISABLED;
+	dp->sec.dex.reconnecting = 0;
+
+	secdp_clear_branch_info(dp);
+	secdp_clear_link_status_update_cnt(dp->link);
+	secdp_logger_set_max_count(300);
+
+#ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
+	if (connect) {
+		secdp_bigdata_connection();
+		secdp_bigdata_save_item(BD_ORIENTATION,
+			(dp->hpd->orientation == ORIENTATION_CC1) ? "CC1" : "CC2");
+		secdp_bigdata_save_item(BD_ADT_VID, noti->sub2);
+		secdp_bigdata_save_item(BD_ADT_PID, noti->sub3);
+	} else
+		secdp_bigdata_disconnection();
+#endif
+
+	return;
+}
+
 static int secdp_ccic_noti_cb(struct notifier_block *nb, unsigned long action,
 		void *data)
 {
@@ -2214,23 +2446,7 @@ static int secdp_ccic_noti_cb(struct notifier_block *nb, unsigned long action,
 
 		switch (noti.sub1) {
 		case CCIC_NOTIFY_ATTACH:
-			dp->sec.cable_connected = true;
-			dp->sec.hdcp_retry = 0;
-			dp->hpd->alt_mode_cfg_done = true;
-			dp->hpd->multi_func = false;
-			secdp_clear_link_status_update_cnt(dp->link);
-			dp->hpd->orientation = secdp_get_plug_orientation();
-			dp->sec.prefer_ratio = MON_RATIO_NA;
-			dp->sec.dex.res =
-				secdp_check_adapter_type(noti.sub2, noti.sub3);
-#ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
-			secdp_bigdata_connection();
-			secdp_bigdata_save_item(BD_ORIENTATION,
-				dp->hpd->orientation == ORIENTATION_CC1 ? "CC1" : "CC2");
-			secdp_bigdata_save_item(BD_ADT_VID, noti.sub2);
-			secdp_bigdata_save_item(BD_ADT_PID, noti.sub3);
-#endif
-			secdp_logger_set_max_count(300);
+			secdp_ccic_connect_init(dp, &noti, true);
 
 #ifndef SECDP_USB_CONCURRENCY
 			/* see dp_display_usbpd_configure_cb() */
@@ -2241,11 +2457,9 @@ static int secdp_ccic_noti_cb(struct notifier_block *nb, unsigned long action,
 				secdp_self_test_start_reconnect(secdp_dex_do_reconnecting);
 
 			secdp_self_register_clear_func(ST_EDID, secdp_self_test_edid_clear);
- 
 			if (secdp_self_test_status(ST_EDID) >= 0)
 				dp->panel->set_edid(dp->panel, secdp_self_test_get_edid()); 
 #endif
-
 			break;
 
 		case CCIC_NOTIFY_DETACH:
@@ -2254,30 +2468,10 @@ static int secdp_ccic_noti_cb(struct notifier_block *nb, unsigned long action,
 				goto end;
 			}
 			dp->is_dp_disconnecting = 1;
-			secdp_logger_set_max_count(300);
-#ifdef CONFIG_COMBO_REDRIVER_PTN36502
-			secdp_redriver_onoff(false, 0);
-#endif
-			/* set flags here as soon as disconnected
-			 * resource clear will be made later at "secdp_process_attention"
-			 */
-			dp->sec.dex.prev = dp->sec.dex.curr = DEX_DISABLED;
-			dp->sec.dex.res = DEX_RES_NOT_SUPPORT;
-			dp->sec.dex.reconnecting = 0;
-			dp->sec.prefer_ratio = MON_RATIO_NA;
-			dp->sec.cable_connected = false;
-			dp->sec.hdcp_retry = 0;
-			dp->sec.link_conf = false;
 			atomic_set(&dp->sec.hpd, 0);
-			dp->hpd->orientation = ORIENTATION_NONE;
-			dp->hpd->multi_func = false;
-			secdp_clear_link_status_update_cnt(dp->link);
-			dp->hpd->alt_mode_cfg_done = false;
 
-			secdp_clear_branch_info(dp);
-#ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
-			secdp_bigdata_disconnection();
-#endif
+			secdp_redriver_onoff(false, 0);
+			secdp_ccic_connect_init(dp, &noti, false);
 			break;
 
 		default:
@@ -2298,23 +2492,16 @@ static int secdp_ccic_noti_cb(struct notifier_block *nb, unsigned long action,
 			noti.sub1 == CCIC_NOTIFY_DP_PIN_D ||
 			noti.sub1 == CCIC_NOTIFY_DP_PIN_F) {
 			dp->hpd->multi_func = true;
-#if defined(CONFIG_COMBO_REDRIVER_PTN36502)
 			secdp_redriver_onoff(true, 2);
-#endif
 		} else {
 			dp->hpd->multi_func = false;
-#if defined(CONFIG_COMBO_REDRIVER_PTN36502)
 			secdp_redriver_onoff(true, 4);
-#endif
 		}
-
 		pr_info("multi_func: <%d>\n", dp->hpd->multi_func);
-
 		/* see dp_display_usbpd_configure_cb() */
 
 		/* host_init is commented out to fix phy cts failure.
-		 * it's called at hpd_high function.
-		 */
+		 * it's called at hpd_high function. */
 		/* dp_display_host_init(dp); */
 #endif
 
@@ -2349,7 +2536,8 @@ static int secdp_ccic_noti_cb(struct notifier_block *nb, unsigned long action,
 		break;
 	}
 
-	pr_debug("sec.link_conf(%d), sec.hpd(%d)\n", dp->sec.link_conf, atomic_read(&dp->sec.hpd));
+	pr_debug("sec.link_conf(%d), sec.hpd(%d)\n", dp->sec.link_conf,
+		atomic_read(&dp->sec.hpd));
 	if ((dp->sec.link_conf && atomic_read(&dp->sec.hpd)) || /*hpd high? or hpd_irq?*/
 		(noti.id == CCIC_NOTIFY_ID_DP_HPD && noti.sub1 == CCIC_NOTIFY_LOW) || /*hpd low?*/
 		(noti.id == CCIC_NOTIFY_ID_DP_CONNECT && noti.sub1 == CCIC_NOTIFY_DETACH)) { /*cable disconnect?*/
@@ -2377,7 +2565,8 @@ static int secdp_ccic_noti_cb(struct notifier_block *nb, unsigned long action,
 				pr_debug("wait for detach complete\n");
 
 				init_completion(&dp->dp_off_comp);
-				ret = wait_for_completion_timeout(&dp->dp_off_comp, msecs_to_jiffies(13500));
+				ret = wait_for_completion_timeout(&dp->dp_off_comp,
+						msecs_to_jiffies(13500));
 				if (ret <= 0) {
 					pr_err("dp_off_comp timedout\n");
 					complete_all(&dp->notification_comp);
@@ -2411,8 +2600,8 @@ int secdp_wait_for_disconnect_complete(void)
 
 	if (dp->is_dp_disconnecting) {
 		init_completion(&dp->dp_disconnect_comp);
-		ret = wait_for_completion_timeout(&dp->dp_disconnect_comp, msecs_to_jiffies(17000));
-
+		ret = wait_for_completion_timeout(&dp->dp_disconnect_comp,
+				msecs_to_jiffies(17000));
 		if (ret > 0) {
 			pr_debug("dp_disconnect_comp complete!\n");
 			ret = 0;
@@ -2578,7 +2767,8 @@ static void secdp_link_status_work(struct work_struct *work)
 
 		if (!secdp_check_link_stable(dp->link)) {
 			pr_info("Check poor connection, again\n");
-			schedule_delayed_work(&dp->sec.link_status_work, msecs_to_jiffies(3000));
+			schedule_delayed_work(&dp->sec.link_status_work,
+				msecs_to_jiffies(3000));
 		}
 	}
 
@@ -2592,6 +2782,7 @@ poor_disconnect:
 
 static int secdp_init(struct dp_display_private *dp)
 {
+	struct secdp_sink_dev  *hmd_list;
 	int rc = -1;
 
 	if (!dp) {
@@ -2620,14 +2811,34 @@ static int secdp_init(struct dp_display_private *dp)
 
 	mutex_init(&dp->attention_lock);
 	mutex_init(&dp->sec.notifier_lock);
+	mutex_init(&dp->sec.hmd_lock);
 #ifdef SECDP_USE_WAKELOCK
 	secdp_init_wakelock(dp);
 #endif
 
 	rc = secdp_event_setup(dp);
-	if (rc)
+	if (rc) {
 		pr_err("secdp_event_setup failed\n");
+		goto end;
+	}
 
+	hmd_list = kzalloc(MAX_NUM_HMD * sizeof(*hmd_list),
+				GFP_KERNEL);
+	if (ZERO_OR_NULL_PTR(hmd_list)) {
+		if (hmd_list)
+			kfree(hmd_list);
+
+		dp->sec.hmd_list = NULL;
+		rc = -ENOMEM;
+		goto end;
+	}
+
+	/* add default AR/VR here */
+	snprintf(hmd_list[0].monitor_name, MON_NAME_LEN, "PicoVR");
+	hmd_list[0].ven_id  = 0x2d40;
+	hmd_list[0].prod_id = 0x0000;
+
+	dp->sec.hmd_list = hmd_list;
 end:
 	pr_info("exit, rc(%d)\n", rc);
 	return rc;
@@ -2639,6 +2850,9 @@ static void secdp_deinit(struct dp_display_private *dp)
 		pr_err("error! no dp structure\n");
 		goto end;
 	}
+
+	kzfree(dp->sec.hmd_list);
+	dp->sec.hmd_list = NULL;
 
 #ifdef SECDP_USE_WAKELOCK
 	secdp_destroy_wakelock(dp);
@@ -2880,7 +3094,7 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 	}
 
 	dp->aux = dp_aux_get(dev, &dp->catalog->aux, dp->parser,
-			dp->aux_switch_node);
+			dp->aux_switch_node, dp->aux_bridge);
 	if (IS_ERR(dp->aux)) {
 		rc = PTR_ERR(dp->aux);
 		pr_err("failed to initialize aux, rc = %d\n", rc);
@@ -2958,15 +3172,12 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 	memset(&dp->mst, 0, sizeof(dp->mst));
 	dp->active_stream_cnt = 0;
 
-#ifndef CONFIG_SEC_DISPLAYPORT
 	cb->configure  = dp_display_usbpd_configure_cb;
 	cb->disconnect = dp_display_usbpd_disconnect_cb;
 	cb->attention  = dp_display_usbpd_attention_cb;
-#else
-	cb->configure  = secdp_display_usbpd_configure_cb;
-	cb->disconnect = secdp_display_usbpd_disconnect_cb;
-#endif
-	dp->hpd = dp_hpd_get(dev, dp->parser, &dp->catalog->hpd, cb);
+
+	dp->hpd = dp_hpd_get(dev, dp->parser, &dp->catalog->hpd, dp->pd,
+			dp->aux_bridge, cb);
 	if (IS_ERR(dp->hpd)) {
 		rc = PTR_ERR(dp->hpd);
 		pr_err("failed to initialize hpd, rc = %d\n", rc);
@@ -3627,6 +3838,10 @@ static struct secdp_display_timing secdp_supported_resolution[] = {
 	{74,   2880,  1600,  90, false, DEX_RES_NOT_SUPPORT},
 #endif
 
+	{76,   3200,  1600,  70, false, DEX_RES_NOT_SUPPORT},	/*Harman VR*/
+	{77,   3200,  1600,  72, false, DEX_RES_NOT_SUPPORT},	/*Pico X1 Glass*/
+	{78,   2160,  3840,  72, false, DEX_RES_NOT_SUPPORT},	/*Pico Real Plus*/
+
 #ifdef SECDP_WIDE_21_9_SUPPORT
 	{80,   3440,  1440,  50, false, DEX_RES_3440X1440,   MON_RATIO_21_9},
 	{81,   3440,  1440,  60, false, DEX_RES_3440X1440,   MON_RATIO_21_9},
@@ -3670,20 +3885,21 @@ bool secdp_check_dex_reconnect(void)
 	struct dp_display_private *dp = g_secdp_priv;
 	struct secdp_misc *sec = &dp->sec;
 	int res_idx;
-	bool ret;
+	bool ret = false;
 
 	pr_info("%d, %d, %d\n", sec->max_mir_res_idx, sec->max_dex_res_idx,
 		sec->prefer_res_idx);
+
+	if (dp->sec.hmd_dev)
+		goto end;
 
 	if (sec->has_prefer)
 		res_idx = sec->prefer_res_idx;
 	else
 		res_idx = sec->max_mir_res_idx;
 
-	if (res_idx == sec->max_dex_res_idx) {
-		ret = false;
+	if (res_idx == sec->max_dex_res_idx)
 		goto end;
-	}
 
 	ret = true;
 end:
@@ -3774,9 +3990,33 @@ end:
 	return ret;
 }
 
+bool secdp_find_supported_resolution(struct dp_panel_info *timing)
+{
+	struct secdp_display_timing *secdp_timing = secdp_supported_resolution;
+	int  i, res_cnt = ARRAY_SIZE(secdp_supported_resolution);
+	u32  h_active, v_active, refresh_rate;
+	bool support = false;
+
+	h_active     = timing->h_active;
+	v_active     = timing->v_active;
+	refresh_rate = timing->refresh_rate;
+
+	for (i = 0; i < res_cnt; i++) {
+		if (h_active == secdp_timing[i].active_h &&
+				v_active == secdp_timing[i].active_v &&
+				refresh_rate == secdp_timing[i].refresh_rate) {
+			support = true;
+			break;
+		}
+	}
+
+	return support;
+}
+
 static bool secdp_check_supported_resolution(struct dp_display_private *dp,
 				struct drm_display_mode *mode, bool supported)
 {
+	struct secdp_display_timing *secdp_timing = secdp_supported_resolution;
 	struct secdp_misc *sec;
 	int i, fps_diff, mode_refresh_rate;
 	bool ret = false;
@@ -3795,8 +4035,9 @@ static bool secdp_check_supported_resolution(struct dp_display_private *dp,
 		pr_info("preferred_timing! %dx%d@%dhz, %s\n",
 			mode->hdisplay, mode->vdisplay, mode->vrefresh,
 			secdp_aspect_ratio_to_string(sec->prefer_ratio));
-		pr_info("resolution | max_mirror: %d, max_dex: %d, prefer: %d\n",
-			sec->max_mir_res_idx, sec->max_dex_res_idx, sec->prefer_res_idx);
+		pr_info("max_mirror: %d, max_dex: %d, prefer: %d\n",
+			sec->max_mir_res_idx, sec->max_dex_res_idx,
+			sec->prefer_res_idx);
 
 		if (!dp->parser->prefer_res)
 			mode->type = mode->type & (unsigned int)(~DRM_MODE_TYPE_PREFERRED);
@@ -3821,42 +4062,42 @@ static bool secdp_check_supported_resolution(struct dp_display_private *dp,
 	mode_refresh_rate = drm_mode_vrefresh(mode);
 
 	for (i = 0; i < res_cnt; i++) {
-		fps_diff = secdp_supported_resolution[i].refresh_rate - mode_refresh_rate;
+		fps_diff = secdp_timing[i].refresh_rate - mode_refresh_rate;
 		fps_diff = fps_diff < 0 ? fps_diff * (-1) : fps_diff;
 
 		if (fps_diff > 1)
 			continue;
 
-		if (secdp_supported_resolution[i].interlaced != interlaced)
+		if (secdp_timing[i].interlaced != interlaced)
 			continue;
 
-		if (secdp_supported_resolution[i].active_h != mode->hdisplay)
+		if (secdp_timing[i].active_h != mode->hdisplay)
 			continue;
 
-		if (secdp_supported_resolution[i].active_v != mode->vdisplay)
+		if (secdp_timing[i].active_v != mode->vdisplay)
 			continue;
 
 		if (secdp_exceed_mst_max_pclk(mode))
 			continue;
 
 		/* sink's max mirror resolution */
-		if (sec->max_mir_res_idx < secdp_supported_resolution[i].index)
-			sec->max_mir_res_idx = secdp_supported_resolution[i].index;
+		if (sec->max_mir_res_idx < secdp_timing[i].index)
+			sec->max_mir_res_idx = secdp_timing[i].index;
 
 		/* sink's max dex resolution */
 		ret = false;
-		if (secdp_supported_resolution[i].dex_res != DEX_RES_NOT_SUPPORT &&
-				secdp_supported_resolution[i].dex_res <= secdp_get_dex_res()) {
+		if (secdp_timing[i].dex_res != DEX_RES_NOT_SUPPORT &&
+				secdp_timing[i].dex_res <= secdp_get_dex_res()) {
 			if (sec->ignore_ratio)
 				ret = true;
-			else if (secdp_supported_resolution[i].mon_ratio == sec->prefer_ratio &&
+			else if (secdp_timing[i].mon_ratio == sec->prefer_ratio &&
 					(mode_refresh_rate >= DEX_FPS_MIN && mode_refresh_rate <= DEX_FPS_MAX))
 				ret = true;
 		}
 
 		if (ret && !sec->has_prefer) {
-			if (sec->max_dex_res_idx < secdp_supported_resolution[i].index)
-				sec->max_dex_res_idx = secdp_supported_resolution[i].index;
+			if (sec->max_dex_res_idx < secdp_timing[i].index)
+				sec->max_dex_res_idx = secdp_timing[i].index;
 		}
 
 		if (dp->parser->prefer_res) {
@@ -3868,7 +4109,7 @@ static bool secdp_check_supported_resolution(struct dp_display_private *dp,
 					sec->prefer_refresh = mode_refresh_rate;
 
 					/* update preferred index */
-					sec->prefer_res_idx = secdp_supported_resolution[i].index;
+					sec->prefer_res_idx = secdp_timing[i].index;
 					sec->has_prefer = true;
 				} else {
 					sec->prefer_hdisp	= 0;
@@ -3892,7 +4133,7 @@ static bool secdp_check_supported_resolution(struct dp_display_private *dp,
 			}
 		}
 
-		if (!secdp_check_dex_mode())
+		if (dp->sec.hmd_dev || !secdp_check_dex_mode())
 			ret = true;
 
 		goto end;
@@ -3902,7 +4143,7 @@ static bool secdp_check_supported_resolution(struct dp_display_private *dp,
 		if (!secdp_exceed_mst_max_pclk(mode) && secdp_check_prefer_resolution(dp, mode)) {
 			/* if hits here, then "prefer_res_idx" will have -2 */
 			sec->has_prefer = true;
-			if (!secdp_check_dex_mode())
+			if (dp->sec.hmd_dev || !secdp_check_dex_mode())
 				ret = true;
 		}
 	}
@@ -3927,6 +4168,11 @@ static enum drm_mode_status dp_display_validate_mode(
 	int hdis, vdis, vref, ar, _hdis, _vdis, _vref, _ar, rate;
 	struct dp_display_mode dp_mode;
 	bool dsc_en;
+	u32 pclk_khz;
+	struct msm_drm_private *priv;
+	struct sde_kms *sde_kms;
+	u32 num_lm = 0;
+	int rc = 0;
 
 	if (!dp_display || !mode || !panel) {
 		pr_err("invalid params\n");
@@ -3965,9 +4211,22 @@ static enum drm_mode_status dp_display_validate_mode(
 		goto end;
 	}
 
-	if (mode->clock > dp_display->max_pclk_khz) {
-		DP_MST_DEBUG("clk:%d, max:%d\n", mode->clock,
+	pclk_khz = dp_mode.timing.widebus_en ?
+		(dp_mode.timing.pixel_clk_khz >> 1) :
+		(dp_mode.timing.pixel_clk_khz);
+
+	if (pclk_khz > dp_display->max_pclk_khz) {
+		DP_MST_DEBUG("clk:%d, max:%d\n", pclk_khz,
 				dp_display->max_pclk_khz);
+		goto end;
+	}
+
+	priv = dp_display->drm_dev->dev_private;
+	sde_kms = to_sde_kms(priv->kms);
+	rc = msm_get_mixer_count(dp->priv, mode,
+			sde_kms->catalog->max_mixer_width, &num_lm);
+	if (rc) {
+		DP_MST_DEBUG("error getting mixer count. rc:%d\n", rc);
 		goto end;
 	}
 
@@ -4174,6 +4433,28 @@ static int dp_display_create_workqueue(struct dp_display_private *dp)
  * so, disabled following codes.
  */
 #if 0 /* CONFIG_SEC_DISPLAYPORT */
+static int dp_display_usbpd_get(struct dp_display_private *dp)
+{
+	int rc = 0;
+	char const *phandle = "qcom,dp-usbpd-detection";
+
+	dp->pd = devm_usbpd_get_by_phandle(&dp->pdev->dev, phandle);
+	if (IS_ERR(dp->pd)) {
+		rc = PTR_ERR(dp->pd);
+
+		/*
+		 * If the pd handle is not present(if return is -ENXIO) then the
+		 * platform might be using a direct hpd connection from sink.
+		 * So, return success in this case.
+		 */
+		if (rc == -ENXIO)
+			return 0;
+
+		pr_err("usbpd phandle failed (%ld)\n", PTR_ERR(dp->pd));
+	}
+	return rc;
+}
+
 static int dp_display_fsa4480_callback(struct notifier_block *self,
 		unsigned long event, void *data)
 {
@@ -4214,6 +4495,52 @@ end:
 	return rc;
 }
 #endif
+
+static int dp_display_bridge_mst_attention(void *dev, bool hpd, bool hpd_irq)
+{
+	struct dp_display_private *dp = dev;
+
+	if (!hpd_irq)
+		return -EINVAL;
+
+	dp_display_mst_attention(dp);
+
+	return 0;
+}
+
+static int dp_display_init_aux_bridge(struct dp_display_private *dp)
+{
+	int rc = 0;
+	const char *phandle = "qcom,dp-aux-bridge";
+	struct device_node *bridge_node;
+
+	if (!dp->pdev->dev.of_node) {
+		pr_err("cannot find dev.of_node\n");
+		rc = -ENODEV;
+		goto end;
+	}
+
+	bridge_node = of_parse_phandle(dp->pdev->dev.of_node,
+			phandle, 0);
+	if (!bridge_node)
+		goto end;
+
+	dp->aux_bridge = of_msm_dp_aux_find_bridge(bridge_node);
+	if (!dp->aux_bridge) {
+		pr_err("failed to find dp aux bridge\n");
+		rc = -EPROBE_DEFER;
+		goto end;
+	}
+
+	if (dp->aux_bridge->register_hpd &&
+			(dp->aux_bridge->flag & MSM_DP_AUX_BRIDGE_MST) &&
+			!(dp->aux_bridge->flag & MSM_DP_AUX_BRIDGE_HPD))
+		dp->aux_bridge->register_hpd(dp->aux_bridge,
+				dp_display_bridge_mst_attention, dp);
+
+end:
+	return rc;
+}
 
 static int dp_display_mst_install(struct dp_display *dp_display,
 			struct dp_mst_drm_install_info *mst_install_info)
@@ -4528,7 +4855,8 @@ static int dp_display_mst_connector_update_link_info(
 	memcpy(&dp_panel->link_info, &dp->panel->link_info,
 			sizeof(dp_panel->link_info));
 
-	DP_MST_DEBUG("dp mst connector:%d link info updated\n");
+	DP_MST_DEBUG("dp mst connector: %d link info updated\n",
+			sde_conn->base.base.id);
 
 	return rc;
 }
@@ -4606,6 +4934,46 @@ static void dp_display_wakeup_phy_layer(struct dp_display *dp_display,
 		hpd->wakeup_phy(hpd, wakeup);
 }
 
+static int dp_display_get_display_type(struct dp_display *dp_display,
+		const char **display_type)
+{
+	struct dp_display_private *dp;
+
+	if (!dp_display || !display_type) {
+		pr_err("invalid input\n");
+		return -EINVAL;
+	}
+
+	dp = container_of(dp_display, struct dp_display_private, dp_display);
+
+	*display_type = dp->parser->display_type;
+
+	return 0;
+}
+
+static int dp_display_mst_get_fixed_topology_display_type(
+		struct dp_display *dp_display, u32 strm_id,
+		const char **display_type)
+{
+	struct dp_display_private *dp;
+
+	if (!dp_display || !display_type) {
+		pr_err("invalid input\n");
+		return -EINVAL;
+	}
+
+	if (strm_id >= DP_STREAM_MAX) {
+		pr_err("invalid stream id:%d\n", strm_id);
+		return -EINVAL;
+	}
+
+	dp = container_of(dp_display, struct dp_display_private, dp_display);
+
+	*display_type = dp->parser->mst_fixed_display_type[strm_id];
+
+	return 0;
+}
+
 static int dp_display_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -4652,12 +5020,20 @@ static int dp_display_probe(struct platform_device *pdev)
  * so, disabled following codes.
  */
 #if 0 /* CONFIG_SEC_DISPLAYPORT */
+	rc = dp_display_usbpd_get(dp);
+	if (rc)
+		goto error;
+
 	rc = dp_display_init_aux_switch(dp);
 	if (rc) {
 		rc = -EPROBE_DEFER;
 		goto error;
 	}
 #endif
+
+	rc = dp_display_init_aux_bridge(dp);
+	if (rc)
+		goto error;
 
 	rc = dp_display_create_workqueue(dp);
 	if (rc) {
@@ -4708,6 +5084,9 @@ static int dp_display_probe(struct platform_device *pdev)
 					dp_display_mst_get_fixed_topology_port;
 	g_dp_display->wakeup_phy_layer =
 					dp_display_wakeup_phy_layer;
+	g_dp_display->get_display_type = dp_display_get_display_type;
+	g_dp_display->mst_get_fixed_topology_display_type =
+				dp_display_mst_get_fixed_topology_display_type;
 
 	rc = component_add(&pdev->dev, &dp_display_comp_ops);
 	if (rc) {

@@ -22,8 +22,8 @@
 #define SDE_POWER_HANDLE_ENABLE_NRT_BUS_IB_QUOTA	0
 #define SDE_POWER_HANDLE_DISABLE_BUS_IB_QUOTA	0
 
-#define SDE_POWER_HANDLE_CONT_SPLASH_BUS_IB_QUOTA	3000000000
-#define SDE_POWER_HANDLE_CONT_SPLASH_BUS_AB_QUOTA	3000000000
+#define SDE_POWER_HANDLE_CONT_SPLASH_BUS_IB_QUOTA	3000000000ULL
+#define SDE_POWER_HANDLE_CONT_SPLASH_BUS_AB_QUOTA	3000000000ULL
 
 #include <linux/sde_io_util.h>
 #include <soc/qcom/cx_ipeak.h>
@@ -134,6 +134,10 @@ struct sde_power_data_bus_handle {
 	u64 ab_nrt;
 	u64 ib_nrt;
 	bool enable;
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+	u64 in_ab_quota;
+	u64 in_ib_quota;
+#endif
 };
 
 /*

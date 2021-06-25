@@ -96,6 +96,7 @@
 #include <asm/cacheflush.h>
 #include <soc/qcom/boot_stats.h>
 
+#include "do_mounts.h"
 #ifdef CONFIG_SEC_GPIO_DVS
 #include <linux/secgpio_dvs.h>
 #endif
@@ -121,7 +122,6 @@ void __init __weak defex_load_rules(void) { }
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
-extern void fork_init(void);
 extern void radix_tree_init(void);
 
 #ifdef CONFIG_DEFERRED_INITCALLS
@@ -587,6 +587,29 @@ void __init __weak thread_stack_cache_init(void)
 
 void __init __weak mem_encrypt_init(void) { }
 
+/* Report memory auto-initialization states for this boot. */
+static void __init report_meminit(void)
+{
+	const char *stack;
+
+	if (IS_ENABLED(CONFIG_INIT_STACK_ALL))
+		stack = "all";
+	else if (IS_ENABLED(CONFIG_GCC_PLUGIN_STRUCTLEAK_BYREF_ALL))
+		stack = "byref_all";
+	else if (IS_ENABLED(CONFIG_GCC_PLUGIN_STRUCTLEAK_BYREF))
+		stack = "byref";
+	else if (IS_ENABLED(CONFIG_GCC_PLUGIN_STRUCTLEAK_USER))
+		stack = "__user";
+	else
+		stack = "off";
+
+	pr_info("mem auto-init: stack:%s, heap alloc:%s, heap free:%s\n",
+		stack, want_init_on_alloc(GFP_KERNEL) ? "on" : "off",
+		want_init_on_free() ? "on" : "off");
+	if (want_init_on_free())
+		pr_info("mem auto-init: clearing system memory may take some time...\n");
+}
+
 /*
  * Set up kernel memory allocators
  */
@@ -598,6 +621,7 @@ static void __init mm_init(void)
 	 * bigger than MAX_ORDER unless SPARSEMEM.
 	 */
 	page_ext_init_flatmem();
+	report_meminit();
 	mem_init();
 	set_memsize_kernel_type(MEMSIZE_KERNEL_STOP);
 	kmem_cache_init();
@@ -709,6 +733,10 @@ static void __init rkp_init(void)
 #define VERITY_PARAM_LENGTH 20
 static char verifiedbootstate[VERITY_PARAM_LENGTH];
 int __check_verifiedboot __kdp_ro = 0;
+#ifdef CONFIG_SAMSUNG_PRODUCT_SHIP
+extern int ss_initialized __kdp_ro;
+#endif
+
 static int __init verifiedboot_state_setup(char *str)
 {
 	strlcpy(verifiedbootstate, str, sizeof(verifiedbootstate));
@@ -745,10 +773,16 @@ void kdp_init(void)
 	cred.comm_task 		= offsetof(struct task_struct,comm);
 	cred.bp_cred_secptr 	= rkp_get_offset_bp_cred();
 	cred.verifiedbootstate	= (u64)verifiedbootstate;
-	uh_call(UH_APP_RKP, 0x40, (u64)&cred, 0, 0, 0);
-}
-#endif /*CONFIG_RKP_KDP*/
+	cred.selinux.empty 	= 0;
+#ifdef CONFIG_SAMSUNG_PRODUCT_SHIP
+	cred.selinux.ss_initialized_va	= (u64)&ss_initialized;	
+#else
+	cred.selinux.ss_initialized_va	= 0;
 
+#endif
+	uh_call(UH_APP_RKP, RKP_KDP_X40, (u64)&cred, 0, 0, 0);
+}
+#endif /* CONFIG_RKP_KDP */
 
 asmlinkage __visible void __init start_kernel(void)
 {
@@ -790,6 +824,8 @@ asmlinkage __visible void __init start_kernel(void)
 	build_all_zonelists(NULL);
 	page_alloc_init();
 
+	/* parameters may set static keys */
+	jump_label_init();
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
@@ -798,8 +834,6 @@ asmlinkage __visible void __init start_kernel(void)
 	if (!IS_ERR_OR_NULL(after_dashes))
 		parse_args("Setting init args", after_dashes, NULL, 0, -1, -1,
 			   NULL, set_init_arg);
-
-	jump_label_init();
 
 	/*
 	 * These use large bootmem allocations and must precede
@@ -965,6 +999,8 @@ asmlinkage __visible void __init start_kernel(void)
 
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
+
+	prevent_tail_call_optimization();
 }
 
 /* Call all constructor functions linked into the kernel. */
@@ -1295,7 +1331,9 @@ static inline void mark_readonly(void)
 static int __ref kernel_init(void *unused)
 {
 	int ret;
-
+#ifdef CONFIG_EARLY_SERVICES
+	int status = 0;
+#endif
 	kernel_init_freeable();
 #ifdef CONFIG_SEC_GPIO_DVS
 	/************************ Caution !!! ****************************/
@@ -1323,6 +1361,15 @@ static int __ref kernel_init(void *unused)
 	rcu_end_inkernel_boot();
 	place_marker("M - DRIVER Kernel Boot Done");
 
+#ifdef CONFIG_EARLY_SERVICES
+	status = get_early_services_status();
+	if (status) {
+		struct kstat stat;
+		/* Wait for early services SE policy load completion signal */
+		while (vfs_stat("/dev/sedone", &stat) != 0)
+			;
+	}
+#endif
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);
 
@@ -1417,6 +1464,7 @@ static noinline void __init kernel_init_freeable(void)
 		ramdisk_execute_command = NULL;
 		prepare_namespace();
 	}
+	launch_early_services();
 
 	/*
 	 * Ok, we have completed the initial bootup, and

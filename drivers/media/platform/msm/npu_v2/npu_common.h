@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,8 +13,9 @@
 #ifndef _NPU_COMMON_H
 #define _NPU_COMMON_H
 
-/*
+/* -------------------------------------------------------------------------
  * Includes
+ * -------------------------------------------------------------------------
  */
 #include <asm/dma-iommu.h>
 #include <linux/cdev.h>
@@ -34,8 +35,9 @@
 
 #include "npu_mgr.h"
 
-/*
+/* -------------------------------------------------------------------------
  * Defines
+ * -------------------------------------------------------------------------
  */
 #define NPU_MAX_MBOX_NUM	    4
 #define NPU_MBOX_LOW_PRI	    0
@@ -47,10 +49,13 @@
 
 #define NUM_MAX_CLK_NUM			48
 #define NPU_MAX_REGULATOR_NUM	2
-#define NPU_MAX_DT_NAME_LEN	    21
+#define NPU_MAX_DT_NAME_LEN		21
 #define NPU_MAX_PWRLEVELS		8
-#define NPU_MAX_STATS_BUF_SIZE 16384
+#define NPU_MAX_STATS_BUF_SIZE	16384
+#define NPU_MAX_PATCH_NUM		160
 #define NPU_MAX_BW_DEVS			4
+
+#define PERF_MODE_DEFAULT 0
 
 enum npu_power_level {
 	NPU_PWRLEVEL_MINSVS = 0,
@@ -73,8 +78,9 @@ enum npu_power_level {
 #define NPU_DBG(fmt, args...)                           \
 	pr_debug("NPU_DBG: %s: %d " fmt, __func__,  __LINE__, ##args)
 
-/*
+/* -------------------------------------------------------------------------
  * Data Structures
+ * -------------------------------------------------------------------------
  */
 struct npu_smmu_ctx {
 	int domain;
@@ -110,14 +116,18 @@ struct npu_debugfs_ctx {
 	struct dentry *root;
 	uint32_t reg_off;
 	uint32_t reg_cnt;
-	char *buf;
-	size_t buf_len;
 	uint8_t *log_buf;
 	struct mutex log_lock;
 	uint32_t log_num_bytes_buffered;
 	uint32_t log_read_index;
 	uint32_t log_write_index;
 	uint32_t log_buf_size;
+};
+
+struct npu_debugfs_reg_ctx {
+	char *buf;
+	size_t buf_len;
+	struct npu_device *npu_dev;
 };
 
 struct npu_mbox {
@@ -167,6 +177,8 @@ struct npu_reg {
  * @uc_pwrlevel - power level from user driver setting
  * @perf_mode_override - perf mode from sysfs to override perf mode
  *                       settings from user driver
+ * @dcvs_mode - dcvs mode from sysfs to turn on dcvs mode
+ *              settings from user driver
  * @devbw - bw device
  */
 struct npu_pwrctrl {
@@ -186,6 +198,8 @@ struct npu_pwrctrl {
 	uint32_t cdsprm_pwrlevel;
 	uint32_t fmax_pwrlevel;
 	uint32_t perf_mode_override;
+	uint32_t dcvs_mode;
+	uint32_t cur_dcvs_activity;
 };
 
 /*
@@ -249,7 +263,7 @@ struct npu_device {
 	struct npu_io_data core_io;
 	struct npu_io_data tcm_io;
 	struct npu_io_data cc_io;
-	struct npu_io_data qdsp_io;
+	struct npu_io_data tcsr_io;
 	struct npu_io_data apss_shared_io;
 	struct npu_io_data qfprom_io;
 
@@ -280,6 +294,7 @@ struct npu_device {
 	struct llcc_slice_desc *sys_cache;
 	uint32_t execute_v2_flag;
 	bool cxlimit_registered;
+	bool npu_dsp_sid_mapped;
 
 	uint32_t hw_version;
 };
@@ -307,8 +322,9 @@ struct ipcc_mbox_chan {
 	struct npu_device *npu_dev;
 };
 
-/*
+/* -------------------------------------------------------------------------
  * Function Prototypes
+ * -------------------------------------------------------------------------
  */
 int npu_debugfs_init(struct npu_device *npu_dev);
 void npu_debugfs_deinit(struct npu_device *npu_dev);
@@ -332,5 +348,7 @@ void disable_fw(struct npu_device *npu_dev);
 int load_fw(struct npu_device *npu_dev);
 int unload_fw(struct npu_device *npu_dev);
 int npu_set_bw(struct npu_device *npu_dev, int new_ib, int new_ab);
-
+int npu_process_kevent(struct npu_client *client, struct npu_kevent *kevt);
+int npu_bridge_mbox_send_data(struct npu_host_ctx *host_ctx,
+	struct npu_mbox *mbox, void *data);
 #endif /* _NPU_COMMON_H */

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,6 +12,9 @@
 #ifndef _MSM_PCM_ROUTING_H
 #define _MSM_PCM_ROUTING_H
 #include <dsp/apr_audio-v2.h>
+#ifdef CONFIG_SEC_SND_ADAPTATION
+#include <dsp/sec_adaptation.h>
+#endif
 
 /*
  * These names are used by HAL to specify the BE. If any changes are
@@ -49,6 +52,8 @@
 #define LPASS_BE_VOICE2_PLAYBACK_TX "VOICE2_PLAYBACK_TX"
 #define LPASS_BE_INCALL_RECORD_RX "INCALL_RECORD_RX"
 #define LPASS_BE_INCALL_RECORD_TX "INCALL_RECORD_TX"
+#define LPASS_BE_PROXY_RX "PROXY_RX"
+#define LPASS_BE_PROXY_TX "PROXY_TX"
 #define LPASS_BE_SEC_I2S_RX "SECONDARY_I2S_RX"
 #define LPASS_BE_PRI_SPDIF_RX "PRI_SPDIF_RX"
 #define LPASS_BE_PRI_SPDIF_TX "PRI_SPDIF_TX"
@@ -272,8 +277,8 @@ enum {
 	MSM_FRONTEND_DAI_MAX,
 };
 
-#define MSM_FRONTEND_DAI_MM_SIZE (MSM_FRONTEND_DAI_MULTIMEDIA31 + 1)
-#define MSM_FRONTEND_DAI_MM_MAX_ID MSM_FRONTEND_DAI_MULTIMEDIA31
+#define MSM_FRONTEND_DAI_MM_SIZE (MSM_FRONTEND_DAI_VOLTE_STUB + 1)
+#define MSM_FRONTEND_DAI_MM_MAX_ID MSM_FRONTEND_DAI_VOLTE_STUB
 
 enum {
 	MSM_BACKEND_DAI_PRI_I2S_RX = 0,
@@ -465,6 +470,8 @@ enum {
 	MSM_BACKEND_DAI_SEC_SPDIF_TX,
 	MSM_BACKEND_DAI_SLIMBUS_9_RX,
 	MSM_BACKEND_DAI_SLIMBUS_9_TX,
+	MSM_BACKEND_DAI_PROXY_RX,
+	MSM_BACKEND_DAI_PROXY_TX,
 	MSM_BACKEND_DAI_MAX,
 };
 
@@ -601,8 +608,8 @@ int msm_pcm_routing_send_chmix_cfg(int fe_id, int ip_channel_cnt,
 	int session_type, int stream_type);
 int msm_pcm_routing_get_pp_ch_cnt(int fe_id, int session_type);
 #ifdef CONFIG_SEC_SND_ADAPTATION
-int q6audio_get_copp_idx_from_port_id(int port_id, int func_type,
-	int sb_val, int *copp_idx);
+int q6audio_get_copp_idx_from_port_id(int port_id, enum sb_type func_type,
+	int *copp_idx);
 int sec_get_copp_idx(int port_id, int func_type);
 #endif
 #endif /*_MSM_PCM_H*/

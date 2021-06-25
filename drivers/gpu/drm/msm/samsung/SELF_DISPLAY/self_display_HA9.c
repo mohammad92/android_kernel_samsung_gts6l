@@ -106,13 +106,13 @@ void make_self_dispaly_img_cmds_HA9(struct samsung_display_driver_data *vdd,
 	/* Image Check Sum Calculation */
 	for (i = 0; i < data_size; i=i+4)
 		check_sum_0 += data[i];
-	
+
 	for (i = 1; i < data_size; i=i+4)
 		check_sum_1 += data[i];
-	
+
 	for (i = 2; i < data_size; i=i+4)
 		check_sum_2 += data[i];
-	
+
 	for (i = 3; i < data_size; i=i+4)
 		check_sum_3 += data[i];
 
@@ -271,13 +271,13 @@ static void self_icon_img_write(struct samsung_display_driver_data *vdd)
 	LCD_ERR("++\n");
 
 	vdd->exclusive_tx.enable = 1;
-	
+
 	ss_set_exclusive_tx_packet(vdd, TX_LEVEL1_KEY_ENABLE, 1);
 	ss_set_exclusive_tx_packet(vdd, TX_SELF_ICON_SET_PRE, 1);
 	ss_set_exclusive_tx_packet(vdd, TX_SELF_ICON_IMAGE, 1);
 	ss_set_exclusive_tx_packet(vdd, TX_SELF_ICON_SET_POST, 1);
 	ss_set_exclusive_tx_packet(vdd, TX_LEVEL1_KEY_DISABLE, 1);
-	
+
 	ss_send_cmd(vdd, TX_LEVEL1_KEY_ENABLE);
 	ss_send_cmd(vdd, TX_SELF_ICON_SET_PRE);
 	ss_send_cmd(vdd, TX_SELF_ICON_IMAGE);
@@ -292,7 +292,7 @@ static void self_icon_img_write(struct samsung_display_driver_data *vdd)
 
 	vdd->exclusive_tx.enable = 0;
 	wake_up_all(&vdd->exclusive_tx.ex_tx_waitq);
-	
+
 	LCD_ERR("--\n");
 }
 
@@ -453,7 +453,7 @@ static void self_aclock_img_write(struct samsung_display_driver_data *vdd)
 	LCD_ERR("++\n");
 
 	vdd->exclusive_tx.enable = 1;
-	
+
 	ss_set_exclusive_tx_packet(vdd, TX_LEVEL1_KEY_ENABLE, 1);
 	ss_set_exclusive_tx_packet(vdd, TX_SELF_ACLOCK_SET_PRE, 1);
 	ss_set_exclusive_tx_packet(vdd, TX_SELF_ACLOCK_IMAGE, 1);
@@ -476,14 +476,13 @@ static void self_aclock_img_write(struct samsung_display_driver_data *vdd)
 
 	vdd->exclusive_tx.enable = 0;
 	wake_up_all(&vdd->exclusive_tx.ex_tx_waitq);
-	
+
 	LCD_ERR("--\n");
 }
 
 static int self_aclock_set(struct samsung_display_driver_data *vdd)
 {
 	u8 *cmd_pload;
-	u32 mem_reuse_x, mem_reuse_y;
 	struct self_analog_clk_info sa_info;
 	struct dsi_panel_cmd_set *pcmds;
 
@@ -541,50 +540,9 @@ static int self_aclock_set(struct samsung_display_driver_data *vdd)
 		LCD_ERR("Invalid Rotation Setting, (%d)\n", sa_info.rotate);
 	}
 
-	/* Clock Memory Mask for Power Saving */
-	if (sa_info.mem_mask_en) {
-		cmd_pload[15] = AC_HH_MASK_ST_X & 0xFF;
-		cmd_pload[16] = AC_HH_MASK_ST_Y & 0x3F;
-		cmd_pload[17] = AC_HH_MASK_ED_X & 0xFF;
-		cmd_pload[18] = AC_HH_MASK_ED_Y & 0x3F;
-		cmd_pload[19] = AC_MM_MASK_ST_X & 0xFF;
-		cmd_pload[20] = AC_MM_MASK_ST_Y & 0x3F;
-		cmd_pload[21] = AC_MM_MASK_ED_X & 0xFF;
-		cmd_pload[22] = AC_MM_MASK_ED_Y & 0x3F;
-		cmd_pload[23] = AC_SS_MASK_ST_X & 0xFF;
-		cmd_pload[24] = AC_SS_MASK_ST_Y & 0x3F;
-		cmd_pload[25] = AC_SS_MASK_ED_X & 0xFF;
-		cmd_pload[26] = AC_SS_MASK_ED_Y & 0x3F;
-	} else {
-		/* Memory Mask does not have enable register, All the value should be zero incase of disable */
-		cmd_pload[15] = cmd_pload[16] = cmd_pload[17] = cmd_pload[18] = cmd_pload[19] = cmd_pload[20] = 0x00;
-		cmd_pload[21] = cmd_pload[22] = cmd_pload[23] = cmd_pload[24] = cmd_pload[25] = cmd_pload[26] = 0x00;
-	}
-
-	/* Clock Memory Reuse for Power Saving */
-	if (sa_info.pos_x >= (AC_HH_MEM_REUSE_W/2))
-		mem_reuse_x = sa_info.pos_x - (AC_HH_MEM_REUSE_W/2);
-	else
-		mem_reuse_x = 0;
-
-	if (sa_info.pos_y  >= (AC_HH_MEM_REUSE_H/2))
-		mem_reuse_y = sa_info.pos_y - (AC_HH_MEM_REUSE_H/2);
-	else
-		mem_reuse_y = 0;
-
-	if (sa_info.mem_reuse_en) {
-		cmd_pload[2] |= BIT(4); /* SC_MEM_DISP_ON */
-		cmd_pload[27] = (mem_reuse_x & 0x700) >> 8;
-		cmd_pload[28] = mem_reuse_x & 0xFF;
-		cmd_pload[29] = (mem_reuse_y & 0xF00) >> 8;
-		cmd_pload[30] = mem_reuse_y & 0xFF;
-		cmd_pload[31] = (AC_HH_MEM_REUSE_W & 0x700) >> 8;
-		cmd_pload[32] = AC_HH_MEM_REUSE_W & 0xFF;
-		cmd_pload[33] = (AC_HH_MEM_REUSE_H & 0xF00) >> 8;
-		cmd_pload[34] = AC_HH_MEM_REUSE_H & 0xFF;
-	} else {
-		cmd_pload[2] &= ~(BIT(4)); /* SC_MEM_DISP_ON */
-	}
+	/* All the registers related with MEM_MASK set to ZERO from R OS */
+	cmd_pload[15] = cmd_pload[16] = cmd_pload[17] = cmd_pload[18] = cmd_pload[19] = cmd_pload[20] = 0x00;
+	cmd_pload[21] = cmd_pload[22] = cmd_pload[23] = cmd_pload[24] = cmd_pload[25] = cmd_pload[26] = 0x00;
 
 skip_update:
 	self_aclock_on(vdd, sa_info.en);
@@ -620,7 +578,7 @@ static void self_dclock_on(struct samsung_display_driver_data *vdd, int enable)
 static void self_dclock_img_write(struct samsung_display_driver_data *vdd)
 {
 	LCD_ERR("++\n");
-	
+
 	vdd->exclusive_tx.enable = 1;
 
 	ss_set_exclusive_tx_packet(vdd, TX_LEVEL1_KEY_ENABLE, 1);
@@ -645,7 +603,7 @@ static void self_dclock_img_write(struct samsung_display_driver_data *vdd)
 
 	vdd->exclusive_tx.enable = 0;
 	wake_up_all(&vdd->exclusive_tx.ex_tx_waitq);
-	
+
 	LCD_ERR("--\n");
 }
 
@@ -882,9 +840,9 @@ static int self_mask_check(struct samsung_display_driver_data *vdd)
 
 	/* self mask data write (4C, 5C) */
 	ss_send_cmd(vdd, TX_LEVEL1_KEY_ENABLE);
-	ss_send_cmd(vdd, TX_SELF_MASK_IMAGE_CRC);	
+	ss_send_cmd(vdd, TX_SELF_MASK_IMAGE_CRC);
 	ss_send_cmd(vdd, TX_LEVEL1_KEY_DISABLE);
-	
+
 	ss_set_exclusive_tx_packet(vdd, TX_LEVEL1_KEY_DISABLE, 0);
 	ss_set_exclusive_tx_packet(vdd, TX_LEVEL1_KEY_ENABLE, 0);
 	ss_set_exclusive_tx_packet(vdd, TX_SELF_MASK_IMAGE_CRC, 0);

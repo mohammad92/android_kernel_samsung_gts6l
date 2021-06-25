@@ -22,12 +22,21 @@
 #include "cam_debug_util.h"
 #include "cam_cpas_api.h"
 
+extern void __iomem *csphy0_base;
+extern void __iomem *csphy1_base;
+extern void __iomem *csphy2_base;
+extern void __iomem *csphy3_base;
+
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
 #include "cam_sensor_cmn_header.h"
 #endif
 
 /* Timeout value in msec */
 #define IFE_CSID_TIMEOUT                               1000
+
+/* Timeout value in msec */
+#define MIPI_CSIPHY_INTERRUPT_STATUS0_ADDR 	0x8B0
+#define MIPI_CSIPHY_INTERRUPT_CLEAR0_ADDR 	0x858
 
 /* TPG VC/DT values */
 #define CAM_IFE_CSID_TPG_VC_VAL                        0xA
@@ -1492,6 +1501,9 @@ static void cam_ife_csid_halt_csi2(
 {
 	const struct cam_ife_csid_reg_offset      *csid_reg;
 	struct cam_hw_soc_info                    *soc_info;
+	int i = 0;
+	void __iomem *phy_base = NULL;
+	uint32_t irq = 0;
 
 	csid_reg = csid_hw->csid_info->csid_reg;
 	soc_info = &csid_hw->hw_info->soc_info;
@@ -1507,6 +1519,39 @@ static void cam_ife_csid_halt_csi2(
 		csid_reg->csi2_reg->csid_csi2_rx_cfg0_addr);
 	cam_io_w_mb(0, soc_info->reg_map[0].mem_base +
 		csid_reg->csi2_reg->csid_csi2_rx_cfg1_addr);
+	// Dump logic for CSI PHY status
+	switch (csid_hw->csi2_rx_cfg.phy_sel) {
+		case 0:
+			phy_base = csphy0_base;
+			break;
+		case 1:
+			phy_base = csphy1_base;
+			break;
+		case 2:
+			phy_base = csphy2_base;
+			break;
+		case 3:
+			phy_base = csphy3_base;
+			break;
+	}
+	CAM_ERR(CAM_CSIPHY,"CSID: %d CSIPHY: %d PHYbase: %p ",csid_hw->hw_intf->hw_idx,csid_hw->csi2_rx_cfg.phy_sel,phy_base);
+	if (phy_base) {
+		for (i = 0; i < 11; i++) {
+			irq = cam_io_r(phy_base +
+				MIPI_CSIPHY_INTERRUPT_STATUS0_ADDR +
+				(0x4 * i));
+			cam_io_w_mb(irq, phy_base +
+			    MIPI_CSIPHY_INTERRUPT_CLEAR0_ADDR +
+			    (0x4 * i));
+			CAM_ERR(CAM_CSIPHY,
+				"CSIPHY%d_IRQ_STATUS_ADDR%d = 0x%x",
+				csid_hw->csi2_rx_cfg.phy_sel, i, irq);
+			cam_io_w_mb(0x0, phy_base +
+				MIPI_CSIPHY_INTERRUPT_CLEAR0_ADDR +
+				(0x4 * i));
+		}
+		csid_hw->error_irq_count = 0;
+	}
 }
 
 static int cam_ife_csid_init_config_pxl_path(
@@ -3052,6 +3097,9 @@ irqreturn_t cam_ife_csid_irq(int irq_num, void *data)
 	uint32_t irq_status_rdi[4] = {0, 0, 0, 0};
 	uint32_t val, irq_status_ppp = 0;
 	bool fatal_err_detected = false;
+	bool soft_err_detected = false;
+	void __iomem *phy_base = NULL;
+	uint32_t irq = 0;
 	uint32_t sof_irq_debug_en = 0;
 #if defined(CONFIG_USE_CAMERA_HW_BIG_DATA)
 	struct cam_hw_param *hw_param = NULL;
@@ -3152,11 +3200,13 @@ irqreturn_t cam_ife_csid_irq(int irq_num, void *data)
 	if (irq_status_rx & CSID_CSI2_RX_ERROR_CPHY_EOT_RECEPTION) {
 		CAM_ERR_RATE_LIMIT(CAM_ISP, "CSID:%d CPHY_EOT_RECEPTION",
 			 csid_hw->hw_intf->hw_idx);
+		soft_err_detected = true;
 		csid_hw->error_irq_count++;
 	}
 	if (irq_status_rx & CSID_CSI2_RX_ERROR_CPHY_SOT_RECEPTION) {
 		CAM_ERR_RATE_LIMIT(CAM_ISP, "CSID:%d CPHY_SOT_RECEPTION",
 			 csid_hw->hw_intf->hw_idx);
+		soft_err_detected = true;
 		csid_hw->error_irq_count++;
 	}
 	if (irq_status_rx & CSID_CSI2_RX_ERROR_CPHY_PH_CRC) {
@@ -3184,10 +3234,13 @@ irqreturn_t cam_ife_csid_irq(int irq_num, void *data)
 	if (irq_status_rx & CSID_CSI2_RX_ERROR_STREAM_UNDERFLOW) {
 		CAM_ERR_RATE_LIMIT(CAM_ISP, "CSID:%d ERROR_STREAM_UNDERFLOW",
 			 csid_hw->hw_intf->hw_idx);
+		soft_err_detected = true;
 	}
 	if (irq_status_rx & CSID_CSI2_RX_ERROR_UNBOUNDED_FRAME) {
 		CAM_ERR_RATE_LIMIT(CAM_ISP, "CSID:%d UNBOUNDED_FRAME",
 			 csid_hw->hw_intf->hw_idx);
+		soft_err_detected = true;
+		csid_hw->error_irq_count++;
 	}
 
 	if (csid_hw->error_irq_count >
@@ -3198,6 +3251,43 @@ irqreturn_t cam_ife_csid_irq(int irq_num, void *data)
 
 	if (fatal_err_detected)
 		cam_ife_csid_halt_csi2(csid_hw);
+	if (soft_err_detected) {
+		// Dump logic for CSI PHY status
+		switch (csid_hw->csi2_rx_cfg.phy_sel) {
+			case 0:
+				phy_base = csphy0_base;
+				break;
+			case 1:
+				phy_base = csphy1_base;
+				break;
+			case 2:
+				phy_base = csphy2_base;
+				break;
+			case 3:
+				phy_base = csphy3_base;
+				break;
+		}
+
+		CAM_INFO(CAM_CSIPHY,"CSID: %d CSIPHY: %d PHYbase: %p ",csid_hw->hw_intf->hw_idx,csid_hw->csi2_rx_cfg.phy_sel,phy_base);
+
+		if (phy_base) {
+			for (i = 0; i < 11; i++) {
+				irq = cam_io_r(phy_base +
+					MIPI_CSIPHY_INTERRUPT_STATUS0_ADDR +
+					(0x4 * i));
+				cam_io_w_mb(irq, phy_base +
+					MIPI_CSIPHY_INTERRUPT_CLEAR0_ADDR +
+					(0x4 * i));
+				CAM_ERR(CAM_CSIPHY,
+					"CSIPHY%d_IRQ_STATUS_ADDR%d = 0x%x",
+					csid_hw->csi2_rx_cfg.phy_sel, i, irq);
+				cam_io_w_mb(0x0, phy_base +
+					MIPI_CSIPHY_INTERRUPT_CLEAR0_ADDR +
+					(0x4 * i));
+			}
+		}
+	    soft_err_detected = false;
+	}
 
 	if (csid_hw->csid_debug & CSID_DEBUG_ENABLE_EOT_IRQ) {
 		if (irq_status_rx & CSID_CSI2_RX_INFO_PHY_DL0_EOT_CAPTURED) {

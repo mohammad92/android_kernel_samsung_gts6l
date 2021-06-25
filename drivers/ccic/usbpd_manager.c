@@ -114,6 +114,9 @@ void usbpd_manager_select_pdo(int num)
 		pd_noti.sink_status.selected_pdo_num = 1;
 	else
 		pd_noti.sink_status.selected_pdo_num = num;
+
+	manager->pn_flag = false;
+
 	pr_info(" %s : PDO(%d) is selected to change\n", __func__, pd_noti.sink_status.selected_pdo_num);
 
 	schedule_delayed_work(&manager->select_pdo_handler, msecs_to_jiffies(50));
@@ -190,6 +193,7 @@ int usbpd_manager_select_pps(int num, int ppsVol, int ppsCur)
 	pr_info(" %s : PPS PDO(%d), voltage(%d), current(%d) is selected to change\n",
 		__func__, pd_noti.sink_status.selected_pdo_num, ppsVol, ppsCur);
 
+	manager->pn_flag = false;
 	//schedule_delayed_work(&manager->select_pdo_handler, msecs_to_jiffies(50));
 	usbpd_manager_inform_event(pd_noti.pusbpd, MANAGER_NEW_POWER_SRC);
 
@@ -506,10 +510,10 @@ int samsung_uvdm_ready(void)
 
 	pr_info("%s\n", __func__);
 
-	if (manager->is_samsung_accessory_enter_mode)
+	if (manager->is_samsung_accessory_enter_mode && manager->pn_flag)
 		uvdm_ready = true;
 
-	pr_info("uvdm ready = %d", uvdm_ready);
+	pr_info("uvdm ready = %d, pn_flag = %d\n", uvdm_ready, manager->pn_flag);
 	return uvdm_ready;
 }
 
@@ -798,6 +802,10 @@ ssize_t samsung_uvdm_out_request_message(void *data, size_t size)
 				pr_err("%s tiemout \n",__func__);
 				return -ETIME;
 			}
+			if (manager->uvdm_error) {
+				manager->uvdm_first_req = false;
+				return manager->uvdm_error;
+			}
 			accumulated_data_size += cur_set_data;
 			remained_data_size -= cur_set_data;
 			if (manager->uvdm_first_req)
@@ -864,6 +872,10 @@ int samsung_uvdm_in_request_message(void *data)
 		if (time_left <= 0) {
 			pr_err("%s timeout\n", __func__);
 			return -ETIME;
+		}
+		if (manager->uvdm_error) {
+			manager->uvdm_first_req = false;
+			return manager->uvdm_error;
 		}
 
 		/* read data */
@@ -932,7 +944,7 @@ void usbpd_manager_receive_samsung_uvdm_message(struct usbpd_data *pd_data)
 	data_obj_type		uvdm_data_obj[USBPD_MAX_COUNT_MSG_OBJECT];
 	struct usbpd_manager_data *manager = &pd_data->manager;
 	s_uvdm_header SEC_UVDM_RES_HEADER;
-	//s_uvdm_header SEC_UVDM_HEADER;
+	s_tx_header SEC_UVDM_TX_HEADER;
 	s_rx_header SEC_UVDM_RX_HEADER;
 	uvdm_msg_header.word = policy->rx_msg_header.word;
 
@@ -941,44 +953,96 @@ void usbpd_manager_receive_samsung_uvdm_message(struct usbpd_data *pd_data)
 		uvdm_data_obj[i].object = policy->rx_data_obj[i].object;
 
 	uvdm_msg_header.word = policy->rx_msg_header.word;
+	manager->uvdm_error = 0;
 
-	pr_info("%s dir %s \n", __func__, (manager->uvdm_dir==DIR_OUT)?"OUT":"IN");
+	pr_info("%s dir %s \n", __func__, (manager->uvdm_dir == DIR_OUT) ? "OUT":"IN");
 	if (manager->uvdm_dir == DIR_OUT) {
 		if (manager->uvdm_first_req) {
 			SEC_UVDM_RES_HEADER.object = uvdm_data_obj[1].object;
 			if (SEC_UVDM_RES_HEADER.data_type == TYPE_LONG) {
 				if (SEC_UVDM_RES_HEADER.cmd_type == RES_ACK) {
 					SEC_UVDM_RX_HEADER.object = uvdm_data_obj[2].object;
-					if (SEC_UVDM_RX_HEADER.result_value != RX_ACK)
-						pr_err("%s Busy or Nak received.\n", __func__);
-				} else
-					pr_err("%s Response type is wrong.\n", __func__);
-			} else {
-				if ( SEC_UVDM_RES_HEADER.cmd_type == RES_ACK)
-					pr_err("%s Short packet: ack received\n", __func__);
-				else
-					pr_err("%s Short packet: Response type is wrong\n", __func__);
+					if (SEC_UVDM_RX_HEADER.result_value == RX_ACK) {
+						/* do nothing */
+					} else if (SEC_UVDM_RX_HEADER.result_value == RX_NAK) {
+						pr_err("%s DIR_OUT RX_NAK received\n", __func__);
+						manager->uvdm_error = -ENODATA;
+					} else if (SEC_UVDM_RX_HEADER.result_value == RX_BUSY) {
+						pr_err("%s DIR_OUT RX_BUSY received\n", __func__);
+						manager->uvdm_error = -EBUSY;
+					} else {
+						pr_err("%s DIR_OUT Undefined RX value\n", __func__);
+						manager->uvdm_error = -EPROTO;
+					}
+				} else if (SEC_UVDM_RES_HEADER.cmd_type == RES_NAK) {
+					pr_err("%s DIR_OUT RES_NAK received\n", __func__);
+					manager->uvdm_error = -ENODATA;
+				} else if (SEC_UVDM_RES_HEADER.cmd_type == RES_BUSY) {
+					pr_err("%s DIR_OUT RES_BUSY received\n", __func__);
+					manager->uvdm_error = -EBUSY;
+				} else {
+					pr_err("%s DIR_OUT Undefined RES value\n", __func__);
+					manager->uvdm_error = -EPROTO;
+				}
+			} else { /* TYPE_SHORT */
+				if (SEC_UVDM_RES_HEADER.cmd_type == RES_ACK) {
+					/* do nothing */
+				} else if (SEC_UVDM_RES_HEADER.cmd_type == RES_NAK) {
+					pr_err("%s DIR_OUT SHORT RES_NAK received\n", __func__);
+					manager->uvdm_error = -ENODATA;
+				} else if (SEC_UVDM_RES_HEADER.cmd_type == RES_BUSY) {
+					pr_err("%s DIR_OUT SHORT RES_BUSY received\n", __func__);
+					manager->uvdm_error = -EBUSY;
+				} else {
+					pr_err("%s DIR_OUT Undefined RES value\n", __func__);
+					manager->uvdm_error = -EPROTO;
+				}
 			}
-		/* Dir: out */
-		} else {
+		} else { /* after 2nd packet for TYPE_LONG */
 			SEC_UVDM_RX_HEADER.object = uvdm_data_obj[1].object;
-			if (SEC_UVDM_RX_HEADER.result_value != RX_ACK)
-				pr_err("%s Busy or Nak received.\n", __func__);
+			if (SEC_UVDM_RX_HEADER.result_value == RX_ACK) {
+				/* do nothing */
+			} else if (SEC_UVDM_RX_HEADER.result_value == RX_NAK) {
+				pr_err("%s DIR_OUT RX_NAK received\n", __func__);
+				manager->uvdm_error = -ENODATA;
+			} else if (SEC_UVDM_RX_HEADER.result_value == RX_BUSY) {
+				pr_err("%s DIR_OUT RX_BUSY received\n", __func__);
+				manager->uvdm_error = -EBUSY;
+			} else {
+				pr_err("%s DIR_OUT Undefined RX value\n", __func__);
+				manager->uvdm_error = -EPROTO;
+			}
 		}
 		complete(&manager->uvdm_out_wait);
-	} else {
-		if (manager->uvdm_first_req) {
+		pr_err("%s DIR_OUT complete!\n", __func__);
+	}else if (manager->uvdm_dir == DIR_IN) {
+		if (manager->uvdm_first_req) { /* LONG and SHORT response is same */
 			SEC_UVDM_RES_HEADER.object = uvdm_data_obj[1].object;
-			if (SEC_UVDM_RES_HEADER.cmd_type != RES_ACK) {
-				pr_err("%s Busy or Nak received.\n", __func__);
-				return;
+			if (SEC_UVDM_RES_HEADER.cmd_type == RES_ACK) {
+				pr_err("%s DIR_IN 1st Response\n", __func__);
+			} else if (SEC_UVDM_RES_HEADER.cmd_type == RES_NAK) {
+				pr_err("%s DIR_IN SEC_UVDM_RESPONDER_NAK received\n", __func__);
+				manager->uvdm_error = -ENODATA;
+			} else if (SEC_UVDM_RES_HEADER.cmd_type == RES_BUSY) {
+				pr_err("%s DIR_IN SEC_UVDM_RESPONDER_BUSY received\n", __func__);
+				manager->uvdm_error = -EBUSY;
+			} else {
+				pr_err("%s DIR_IN Undefined RESPONDER value\n", __func__);
+				manager->uvdm_error = -EPROTO;
 			}
+		} else {
+			/* don't have ack packet after 2nd sec_tx_data_header */
+			SEC_UVDM_TX_HEADER.object = uvdm_data_obj[1].object;
+			if (SEC_UVDM_TX_HEADER.object != 0)
+				pr_err("%s DIR_IN %dth Response\n", __func__, SEC_UVDM_TX_HEADER.order_cur_set);
+			else
+				pr_err("%s DIR_IN Last Response. It's zero\n", __func__);
 		}
-
 		complete(&manager->uvdm_in_wait);
+		pr_err("%s DIR_IN complete!\n", __func__);
+	} else {
+		pr_err("%s Never Call!!!\n", __func__);
 	}
-
-	return;
 }
 
 void usbpd_manager_plug_attach(struct device *dev, muic_attached_dev_t new_dev)
@@ -1350,6 +1414,9 @@ int usbpd_manager_check_accessory(struct usbpd_manager_data *manager)
 				pr_info("%s : default device connected.\n", __func__);
 				break;
 			}
+		} else {
+			acc_type = CCIC_DOCK_NEW;
+			pr_info("%s : unknown device connected.\n",	__func__);
 		}
 		manager->acc_type = acc_type;
 	} else
@@ -1471,6 +1538,34 @@ data_obj_type usbpd_manager_select_capability(struct usbpd_data *pd_data)
 	return	>0	: request object number
 		0	: no selected option
 */
+int usbpd_manager_get_selected_voltage(struct usbpd_data *pd_data, int selected_pdo)
+{
+#if defined(CONFIG_BATTERY_SAMSUNG) && defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
+	PDIC_SINK_STATUS *pdic_sink_status = &pd_noti.sink_status;
+
+	int available_pdo = pdic_sink_status->available_pdo_num;
+	int volt = 0;
+
+	if (selected_pdo > available_pdo) {
+		pr_info("%s, selected:%d, available:%d\n", __func__, selected_pdo, available_pdo);
+		return 0;
+	}
+
+#if defined(CONFIG_PDIC_PD30)
+	if (pdic_sink_status->power_list[selected_pdo].apdo) {
+		pr_info("%s, selected pdo is apdo(%d)\n", __func__, selected_pdo);
+		return 0;
+	}
+#endif
+
+	volt = pdic_sink_status->power_list[selected_pdo].max_voltage;
+	pr_info("%s, select_pdo : %d, selected_voltage : %dmV\n", __func__, selected_pdo, volt);
+
+	return volt;
+#else
+	return 0;
+#endif
+}
 int usbpd_manager_evaluate_capability(struct usbpd_data *pd_data)
 {
 	struct policy_data *policy = &pd_data->policy;
@@ -1534,8 +1629,7 @@ int usbpd_manager_evaluate_capability(struct usbpd_data *pd_data)
 			pd_current = pd_obj->power_data_obj_pps.max_current;
 #ifdef CONFIG_BATTERY_SAMSUNG
 #ifdef CONFIG_USB_TYPEC_MANAGER_NOTIFIER
-			if (pd_volt * USBPD_PPS_VOLT_UNIT <= MAX_CHARGING_VOLT)
-				available_pdo_num = i + 1;
+			available_pdo_num = i + 1;
 			pdic_sink_status->power_list[i + 1].max_voltage = pd_volt * USBPD_PPS_VOLT_UNIT;
 			pdic_sink_status->power_list[i + 1].max_current = pd_current * USBPD_PPS_CURRENT_UNIT;
 #if defined(CONFIG_PDIC_PD30)
@@ -1690,8 +1784,10 @@ void usbpd_init_manager_val(struct usbpd_data *pd_data)
 	manager->Standard_Vendor_ID = 0;
 	manager->prev_available_pdo = 0;
 	manager->ps_rdy = 0;
+	manager->uvdm_error = 0;
 	reinit_completion(&manager->uvdm_out_wait);
 	reinit_completion(&manager->uvdm_in_wait);
+	reinit_completion(&manager->psrdy_wait);
 	usbpd_manager_select_pdo_cancel(pd_data->dev);
 	usbpd_manager_start_discover_msg_cancel(pd_data->dev);
 }
@@ -1740,6 +1836,7 @@ int usbpd_init_manager(struct usbpd_data *pd_data)
 
 	init_completion(&manager->uvdm_out_wait);
 	init_completion(&manager->uvdm_in_wait);
+	init_completion(&manager->psrdy_wait);
 
 	usbpd_manager_register_switch_device(1);
 	init_source_cap_data(manager);

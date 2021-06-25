@@ -105,6 +105,7 @@ static void run_prox_intensity_read_all(void *device_data);
 static void get_idle_sensing_fault(void *device_data);
 static void set_low_power_sensitivity(void *device_data);
 static void set_sip_mode(void *device_data);
+static void set_game_mode(void *device_data);
 static void not_support_cmd(void *device_data);
 
 static int execute_selftest(struct sec_ts_data *ts, bool save_result);
@@ -208,7 +209,8 @@ static struct sec_cmd sec_cmds[] = {
 	{SEC_CMD("run_prox_intensity_read_all", run_prox_intensity_read_all),},
 	{SEC_CMD("get_idle_sensing_fault", get_idle_sensing_fault),},
 	{SEC_CMD_H("set_low_power_sensitivity", set_low_power_sensitivity),},
-	{SEC_CMD_H("set_sip_mode", set_sip_mode),},	
+	{SEC_CMD_H("set_sip_mode", set_sip_mode),},
+	{SEC_CMD_H("set_game_mode", set_game_mode),},
 	{SEC_CMD("not_support_cmd", not_support_cmd),},
 };
 
@@ -6984,6 +6986,44 @@ static void set_sip_mode(void *device_data)
 	ret = ts->sec_ts_i2c_write(ts, SEC_TS_CMD_SIP_MODE, &ts->sip_mode, 1);
 	if (ret < 0) {
 		input_err(true, &ts->client->dev, "%s: Failed to send aod off_on cmd\n", __func__);
+		goto NG;
+	}
+
+	snprintf(buff, sizeof(buff), "OK");
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+	return;
+
+NG:
+	snprintf(buff, sizeof(buff), "NG");
+	sec->cmd_state = SEC_CMD_STATUS_FAIL;
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec_cmd_set_cmd_exit(sec);
+}
+
+static void set_game_mode(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct sec_ts_data *ts = container_of(sec, struct sec_ts_data, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+	int ret;
+	unsigned char data;
+
+	sec_cmd_set_default_result(sec);
+
+	input_info(true, &ts->client->dev, "%s: %d\n", __func__, sec->cmd_param[0]);
+
+	if (sec->cmd_param[0] < 0 || sec->cmd_param[0] > 1) {
+		input_err(true, &ts->client->dev, "%s: parm err(%d)\n", __func__, sec->cmd_param[0]);
+		goto NG;
+	}
+
+	data = sec->cmd_param[0];
+
+	ret = ts->sec_ts_i2c_write(ts, SEC_TS_CMD_GAME_MODE, &data, 1);
+	if (ret < 0) {
+		input_err(true, &ts->client->dev, "%s: Failed to send game mode cmd\n", __func__);
 		goto NG;
 	}
 

@@ -480,6 +480,7 @@ typedef struct usbpd_phy_ops {
 	int    (*vbus_on_check)(void *);
 	int		(*get_side_check)(void *_data);
 	int    (*set_rp_control)(void *, int);
+	int    (*set_chg_lv_mode)(void *, int);
 #if defined(CONFIG_TYPEC)
 	void	(*set_pwr_opmode)(void *, int);
 #endif
@@ -593,6 +594,9 @@ struct usbpd_manager_data {
 	bool uvdm_dir;
 	struct completion uvdm_out_wait;
 	struct completion uvdm_in_wait;
+	struct completion psrdy_wait;
+	bool pn_flag;
+	int uvdm_error;
 
 	uint16_t Vendor_ID;
 	uint16_t Product_ID;
@@ -673,6 +677,7 @@ extern void usbpd_init_policy(struct usbpd_data *);
 
 extern void  usbpd_init_manager_val(struct usbpd_data *);
 extern int  usbpd_init_manager(struct usbpd_data *);
+extern int usbpd_manager_get_selected_voltage(struct usbpd_data *pd_data, int selected_pdo);
 extern void usbpd_manager_plug_attach(struct device *, muic_attached_dev_t);
 extern void usbpd_manager_plug_detach(struct device *dev, bool notify);
 extern void usbpd_manager_acc_detach(struct device *dev);
@@ -727,5 +732,6 @@ void usbpd_timer1_start(struct usbpd_data *pd_data);
 long long usbpd_check_time1(struct usbpd_data *pd_data);
 void usbpd_timer2_start(struct usbpd_data *pd_data);
 long long usbpd_check_time2(struct usbpd_data *pd_data);
+bool sec_pps_control(int en);
 
 #endif

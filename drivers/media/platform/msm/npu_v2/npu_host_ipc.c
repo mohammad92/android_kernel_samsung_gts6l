@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,8 +10,9 @@
  * GNU General Public License for more details.
  */
 
-/*
+/* -------------------------------------------------------------------------
  * Includes
+ * -------------------------------------------------------------------------
  */
 #include "npu_hw_access.h"
 #include "npu_mgr.h"
@@ -19,8 +20,9 @@
 #include "npu_hw.h"
 #include "npu_host_ipc.h"
 
-/*
+/* -------------------------------------------------------------------------
  * Defines
+ * -------------------------------------------------------------------------
  */
 /* HFI IPC interface */
 #define TX_HDR_TYPE 0x01000000
@@ -29,8 +31,9 @@
 
 #define QUEUE_TBL_VERSION 0x87654321
 
-/*
+/* -------------------------------------------------------------------------
  * Data Structures
+ * -------------------------------------------------------------------------
  */
 struct npu_queue_tuple {
 	uint32_t size;
@@ -42,12 +45,13 @@ static const struct npu_queue_tuple npu_q_setup[6] = {
 	{ 4096, IPC_QUEUE_APPS_EXEC         | TX_HDR_TYPE | RX_HDR_TYPE },
 	{ 4096, IPC_QUEUE_DSP_EXEC          | TX_HDR_TYPE | RX_HDR_TYPE },
 	{ 4096, IPC_QUEUE_APPS_RSP          | TX_HDR_TYPE | RX_HDR_TYPE },
-	{ 1024, IPC_QUEUE_DSP_RSP           | TX_HDR_TYPE | RX_HDR_TYPE },
+	{ 4096, IPC_QUEUE_DSP_RSP           | TX_HDR_TYPE | RX_HDR_TYPE },
 	{ 1024, IPC_QUEUE_LOG               | TX_HDR_TYPE | RX_HDR_TYPE },
 };
 
-/*
+/* -------------------------------------------------------------------------
  * File Scope Function Prototypes
+ * -------------------------------------------------------------------------
  */
 static int npu_host_ipc_init_hfi(struct npu_device *npu_dev);
 static int npu_host_ipc_send_cmd_hfi(struct npu_device *npu_dev,
@@ -59,8 +63,9 @@ static int ipc_queue_read(struct npu_device *npu_dev, uint32_t target_que,
 static int ipc_queue_write(struct npu_device *npu_dev, uint32_t target_que,
 				uint8_t *packet, uint8_t *is_rx_req_set);
 
-/*
+/* -------------------------------------------------------------------------
  * Function Definitions
+ * -------------------------------------------------------------------------
  */
 static int npu_host_ipc_init_hfi(struct npu_device *npu_dev)
 {
@@ -219,7 +224,7 @@ static int ipc_queue_read(struct npu_device *npu_dev,
 		 */
 		queue.qhdr_rx_req = 1;
 		*is_tx_req_set = 0;
-		status = -EPERM;
+		status = -EIO;
 		goto exit;
 	}
 
@@ -234,10 +239,13 @@ static int ipc_queue_read(struct npu_device *npu_dev,
 			target_que,
 			packet_size);
 
-	if (packet_size == 0) {
-		status = -EPERM;
+	if ((packet_size == 0) ||
+		(packet_size > NPU_IPC_BUF_LENGTH)) {
+		NPU_ERR("Invalid packet size %d\n", packet_size);
+		status = -EINVAL;
 		goto exit;
 	}
+
 	new_read_idx = queue.qhdr_read_idx + packet_size;
 
 	if (new_read_idx < (queue.qhdr_q_size)) {
@@ -308,7 +316,7 @@ static int ipc_queue_write(struct npu_device *npu_dev,
 	packet_size = (*(uint32_t *)packet);
 	if (packet_size == 0) {
 		/* assign failed status and return */
-		status = -EPERM;
+		status = -EINVAL;
 		goto exit;
 	}
 
@@ -366,8 +374,6 @@ static int ipc_queue_write(struct npu_device *npu_dev,
 	/* Update qhdr_write_idx */
 	queue.qhdr_write_idx = new_write_idx;
 
-	*is_rx_req_set = (queue.qhdr_rx_req == 1) ? 1 : 0;
-
 	/* Update Write pointer -- queue.qhdr_write_idx */
 exit:
 	/* Update TX request -- queue.qhdr_tx_req */
@@ -378,11 +384,19 @@ exit:
 		(size_t)&(queue.qhdr_write_idx) - (size_t)&queue))),
 		&queue.qhdr_write_idx, sizeof(queue.qhdr_write_idx));
 
+	/* check if irq is required after write_idx is updated */
+	MEMR(npu_dev, (void *)((size_t)(offset + (uint32_t)(
+		(size_t)&(queue.qhdr_rx_req) - (size_t)&queue))),
+		(uint8_t *)&queue.qhdr_rx_req,
+		sizeof(queue.qhdr_rx_req));
+	*is_rx_req_set = (queue.qhdr_rx_req == 1) ? 1 : 0;
+
 	return status;
 }
 
-/*
+/* -------------------------------------------------------------------------
  * IPC Interface functions
+ * -------------------------------------------------------------------------
  */
 int npu_host_ipc_send_cmd(struct npu_device *npu_dev, uint32_t q_idx,
 		void *cmd_ptr)
@@ -404,4 +418,14 @@ int npu_host_ipc_pre_init(struct npu_device *npu_dev)
 int npu_host_ipc_post_init(struct npu_device *npu_dev)
 {
 	return 0;
+}
+
+int npu_host_get_ipc_queue_size(struct npu_device *npu_dev, uint32_t q_idx)
+{
+	if (q_idx >= ARRAY_SIZE(npu_q_setup)) {
+		NPU_ERR("Invalid ipc queue index %d\n", q_idx);
+		return -EINVAL;
+	}
+
+	return npu_q_setup[q_idx].size;
 }

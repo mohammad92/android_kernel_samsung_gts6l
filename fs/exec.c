@@ -69,6 +69,9 @@
 #include <asm/tlb.h>
 
 #include <trace/events/task.h>
+#ifdef CONFIG_RKP_NS_PROT
+#include "mount.h"
+#endif
 #include "internal.h"
 
 #include <trace/events/sched.h>
@@ -1033,7 +1036,7 @@ static int exec_mmap(struct mm_struct *mm)
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
 	old_mm = current->mm;
-	mm_release(tsk, old_mm);
+	exec_mm_release(tsk, old_mm);
 
 	if (old_mm) {
 		sync_mm_rss(old_mm);
@@ -1274,17 +1277,60 @@ extern struct super_block *odm_sb;	/* pointer to superblock */
 extern struct super_block *vendor_sb;	/* pointer to superblock */
 extern struct super_block *rootfs_sb;	/* pointer to superblock */
 extern struct super_block *art_sb;	/* pointer to superblock */
+extern struct super_block *crypt_sb;	/* pointer to superblock */
+extern struct super_block *adbd_sb;	/* pointer to superblock */
+extern struct super_block *runtime_sb;	/* pointer to superblock */
 extern int __check_verifiedboot;
 static int kdp_check_sb_mismatch(struct super_block *sb) 
 {	
 	if(__is_kdp_recovery || __check_verifiedboot) {
 		return 0;
 	}
-	if((sb != rootfs_sb) && (sb != sys_sb)
-		&& (sb != odm_sb) && (sb != vendor_sb) && (sb != art_sb)) {
-		return 1;
+
+	if ((sb != rootfs_sb) && (sb != sys_sb)
+		&& (sb != odm_sb) && (sb != vendor_sb) && (sb != art_sb) 
+		&& (sb != crypt_sb) && (sb!=adbd_sb) && (sb!=runtime_sb)) {
+			return 1;
 	}
 	return 0;
+}
+
+static int kdp_check_path_mismatch(struct vfsmount *vfsmnt)
+{
+	int i = 0;
+	int ret = -1;
+	char *buf = NULL;
+	char *path_name = NULL;
+	const char* skip_path[] = {
+		"/com.android.runtime",
+		"/com.android.conscrypt",
+		"/com.android.art",
+		"/com.android.adbd",
+	};
+
+	if (!vfsmnt->bp_mount) {
+		printk(KERN_ERR "vfsmnt->bp_mount is NULL");
+		return -ENOMEM;
+	}
+
+	buf = kzalloc(PATH_MAX, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	path_name = dentry_path_raw(vfsmnt->bp_mount->mnt_mountpoint, buf, PATH_MAX);
+	if (IS_ERR(path_name))
+		goto out;
+
+	for (; i < ARRAY_SIZE(skip_path); ++i) {
+		if (!strncmp(path_name, skip_path[i], strlen(skip_path[i]))) {
+			ret = 0;
+			break;
+		}
+	}
+out:
+	kfree(buf);
+
+	return ret;
 }
 
 static int invalid_drive(struct linux_binprm * bprm) 
@@ -1298,11 +1344,16 @@ static int invalid_drive(struct linux_binprm * bprm)
 		printk("\nInvalid Drive #%s# #%p#\n",bprm->filename, vfsmnt);
 		return 1;
 	} 
+
+	if (!kdp_check_path_mismatch(vfsmnt)) {
+		return 0;
+	}
+
 	sb = vfsmnt->mnt_sb;
 
-	if(kdp_check_sb_mismatch(sb)) {
-		printk("\n Superblock Mismatch #%s# vfsmnt #%p#sb #%p:%p:%p:%p:%p:%p#\n",
-					bprm->filename, vfsmnt, sb, rootfs_sb, sys_sb, odm_sb, vendor_sb, art_sb);
+	if (kdp_check_sb_mismatch(sb)) {
+		printk("\n Superblock Mismatch #%s# vfsmnt #%lx#sb #%lx:%lx:%lx:%lx:%lx:%lx:%lx:%lx:%lx#\n",
+					bprm->filename, vfsmnt, sb, rootfs_sb, sys_sb, odm_sb, vendor_sb, art_sb,crypt_sb,adbd_sb,runtime_sb);
 		return 1;
 	}
 
@@ -1346,6 +1397,8 @@ int flush_old_exec(struct linux_binprm * bprm)
 	 * to be lockless.
 	 */
 	set_mm_exe_file(bprm->mm, bprm->file);
+
+	would_dump(bprm, bprm->file);
 
 	/*
 	 * Release all of the old mmap stuff
@@ -1463,7 +1516,7 @@ void setup_new_exec(struct linux_binprm * bprm)
 
 	/* An exec changes our domain. We are no longer part of the thread
 	   group */
-	current->self_exec_id++;
+	WRITE_ONCE(current->self_exec_id, current->self_exec_id + 1);
 	flush_signal_handlers(current, 0);
 }
 EXPORT_SYMBOL(setup_new_exec);
@@ -1898,8 +1951,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (retval < 0)
 		goto out;
 
-	would_dump(bprm, bprm->file);
-
 	retval = exec_binprm(bprm);
 	if (retval < 0)
 		goto out;
@@ -1909,7 +1960,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 	current->in_execve = 0;
 	membarrier_execve(current);
 	acct_update_integrals(current);
-	task_numa_free(current);
+	task_numa_free(current, false);
 	free_bprm(bprm);
 	kfree(pathbuf);
 	putname(filename);

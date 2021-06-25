@@ -2005,6 +2005,14 @@ static u8 fts_event_handler_type_b(struct fts_ts_info *info)
 						event_buff[0], event_buff[1], event_buff[2],
 						event_buff[3], event_buff[4], event_buff[5],
 						event_buff[6], event_buff[7]);
+#if defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+				/* do not reset when it is not ship build. because it need to be debugged */
+				if ((event_buff[0] == FTS_EVENT_ERROR_REPORT) && (event_buff[1] <= 0x05 || (event_buff[1] >= 0x12 && event_buff[1] <= 0x17))) {
+					input_err(true, &info->client->dev, "%s: abnormal error detected, do reset\n", __func__);
+					if (!info->reset_is_on_going)
+						schedule_delayed_work(&info->reset_work, msecs_to_jiffies(10));
+				}
+#endif
 			}
 			break;
 		default:
@@ -3126,7 +3134,7 @@ static void fts_input_close(struct input_dev *dev)
 	if (info->prox_power_off)
 		fts_stop_device(info, 0);
 	else
-		fts_stop_device(info, info->lowpower_flag);
+		fts_stop_device(info, info->lowpower_flag || info->fod_lp_mode);
 	info->prox_power_off = 0;
 	info->fw_corruption = false;
 }
@@ -3363,7 +3371,7 @@ static void fts_reset_work(struct work_struct *work)
 	if (info->input_dev_touch->disabled) {
 		input_err(true, &info->client->dev, "%s: call input_close\n", __func__);
 
-		fts_stop_device(info, info->lowpower_flag);
+		fts_stop_device(info, info->lowpower_flag || info->fod_lp_mode);
 
 		if (info->lowpower_flag & FTS_MODE_AOD)
 			fts_set_aod_rect(info);
@@ -3608,7 +3616,7 @@ static int fts_suspend(struct i2c_client *client, pm_message_t mesg)
 
 	input_dbg(true, &info->client->dev, "%s\n", __func__);
 
-	fts_stop_device(info, info->lowpower_flag);
+	fts_stop_device(info, info->lowpower_flag || info->fod_lp_mode);
 
 	return 0;
 }

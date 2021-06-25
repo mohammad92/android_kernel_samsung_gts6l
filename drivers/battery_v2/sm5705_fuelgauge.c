@@ -1476,8 +1476,9 @@ static int sm5705_fg_parse_dt(struct sec_fuelgauge_info *fuelgauge)
 #ifdef ENABLE_FULL_OFFSET
 	int full_offset[2];	
 #endif
-	int ret;
+	int ret, len;
 	int i, j;
+	const u32 *p;
 	struct device_node *np = of_find_node_by_name(NULL, "sm5705-fuelgauge");
 
 	/* reset, irq gpio info */
@@ -1550,6 +1551,35 @@ static int sm5705_fg_parse_dt(struct sec_fuelgauge_info *fuelgauge)
 		pr_info("%s: fg_irq: %d, calculation_type: 0x%x, fuel_alert_soc: %d, repeated_fuelalert: %d\n",
 			__func__, fuelgauge->pdata->fg_irq, fuelgauge->pdata->capacity_calculation_type,
 			fuelgauge->pdata->fuel_alert_soc, fuelgauge->pdata->repeated_fuelalert);
+
+		ret = of_property_read_u32(np, "fuelgauge,ttf_capacity",
+					   &fuelgauge->ttf_capacity);
+		if (ret < 0) {
+			pr_err("%s error reading capacity_calculation_type %d\n", __func__, ret);
+			fuelgauge->ttf_capacity = fuelgauge->capacity;
+		}
+
+		p = of_get_property(np, "fuelgauge,cv_data", &len);
+		if (p) {
+			fuelgauge->cv_data = kzalloc(len, GFP_KERNEL);
+			fuelgauge->cv_data_length =
+			    len / sizeof(struct cv_slope);
+			pr_err("%s len: %ld, length: %d, %d\n", __func__,
+			       sizeof(int) * len, len, fuelgauge->cv_data_length);
+			ret =
+			    of_property_read_u32_array(np, "fuelgauge,cv_data",
+						       (u32 *) fuelgauge->cv_data,
+							len / sizeof(u32));
+			if (ret) {
+				pr_err
+				    ("%s failed to read fuelgauge->cv_data: %d\n",
+				     __func__, ret);
+				kfree(fuelgauge->cv_data);
+				fuelgauge->cv_data = NULL;
+			}
+		} else {
+			pr_err("%s there is not cv_data\n", __func__);
+		}
 	}
 
 	// get battery_params node
@@ -2063,6 +2093,53 @@ static void sm5705_fg_reset_capacity_by_jig_connection(struct sec_fuelgauge_info
 	value.intval = 1079;
 	psy_do_property("battery", set,	POWER_SUPPLY_PROP_VOLTAGE_NOW, value);
 }
+static int calc_ttf(struct sec_fuelgauge_info *fuelgauge,
+		    union power_supply_propval *val)
+{
+	int i;
+	int cc_time = 0, cv_time = 0;
+
+	int soc = sm5705_get_soc(fuelgauge->client);
+	int charge_current = val->intval;
+	struct cv_slope *cv_data = fuelgauge->cv_data;
+	int design_cap = fuelgauge->ttf_capacity;
+
+	if (!cv_data || (val->intval <= 0)) {
+		pr_info("%s: no cv_data or val: %d\n", __func__, val->intval);
+		return -1;
+	}
+	for (i = 0; i < fuelgauge->cv_data_length; i++) {
+		if (charge_current >= cv_data[i].fg_current)
+			break;
+	}
+	i = i >= fuelgauge->cv_data_length ? fuelgauge->cv_data_length - 1 : i;
+	if (cv_data[i].soc < soc) {
+		for (i = 0; i < fuelgauge->cv_data_length; i++) {
+			if (soc <= cv_data[i].soc)
+				break;
+		}
+		cv_time =
+		    ((cv_data[i - 1].time - cv_data[i].time) * (cv_data[i].soc - soc)
+		     / (cv_data[i].soc - cv_data[i - 1].soc)) + cv_data[i].time;
+	} else {		/* CC mode || NONE */
+		cv_time = cv_data[i].time;
+		cc_time = design_cap * (cv_data[i].soc - soc)
+		    / val->intval * 3600 / 1000;
+		pr_debug("%s: cc_time: %d\n", __func__, cc_time);
+		if (cc_time < 0)
+			cc_time = 0;
+	}
+
+	pr_debug
+	    ("%s: cap: %d, soc: %4d, T: %6d, cv soc: %4d, i: %4d, val: %d\n",
+	     __func__, design_cap, soc, cv_time + cc_time, cv_data[i].soc, i, val->intval);
+
+	if (cv_time + cc_time >= 0)
+		return cv_time + cc_time + 60;
+	else
+		return 60;	/* minimum 1minutes */
+}
+
 static int sm5705_fg_get_property(struct power_supply *psy, enum power_supply_property psp,
 						union power_supply_propval *val)
 {
@@ -2187,6 +2264,9 @@ static int sm5705_fg_get_property(struct power_supply *psy, enum power_supply_pr
 		default:
 			return -EINVAL;
 		}
+		break;
+	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
+		val->intval = calc_ttf(fuelgauge, val);
 		break;
 	default:
 		return -EINVAL;

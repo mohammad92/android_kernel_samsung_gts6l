@@ -93,6 +93,15 @@ config STK3331_FACTORY
 	  request selftest to adsp_factory.
 	  receive test result from adsp_factory.
 
+config STK3A9X_FACTORY
+	tristate "factory test for SSC - stk3a9x"
+	default n
+	help
+	  stk3a9x factory driver.
+	  provide sysfs for factory test.
+	  request selftest to adsp_factory.
+	  receive test result from adsp_factory.
+
 config SUPPORT_PROX_AUTO_CAL
 	tristate "Support Auto Calibration for proximity sensor - tmd490x"
 	default n
@@ -164,6 +173,15 @@ config SUPPORT_PROX_POWER_ON_CAL
 	help
 	  Support power on calibration for proximity sensor
 	  make calibration process done as the device power up.
+
+config SUPPORT_PROX_CALIBRATION
+	tristate "prox cal for SSC"
+	default n
+	help
+	  prox calibration feature.
+	  provide sysfs for prox calibration.
+	  request prox cal to adsp_factory.
+	  receive cal value from adsp_factory.
 
 config SUPPORT_BHL_COMPENSATION_FOR_LIGHT_SENSOR
 	tristate "Sensors support BHL compensation"
@@ -247,3 +265,15 @@ config SUPPORT_SSC_MODE_FOR_MAG
 	default n
 	help
 	  Support the ssc mode for mag function.
+
+config SUPPORT_SLPI_NACK_FORCE_SSR
+	tristate "Support the force ssr when the slpi is no response."
+	default n
+	help
+	  Support the force ssr when the slpi is no response	  
+
+config SUPPORT_SSC_AOD_RECT
+	tristate "Support getting AOD rect"
+	default n
+	help
+	  Support getting AOD rec.

@@ -66,7 +66,7 @@
 #define IDLE_STATE		0
 #define TOUCH_STATE		1
 
-#define HALLIC_PATH		"/sys/class/sec/sec_key/hall_detect"
+#define HALLIC_PATH		"/sys/class/sec/hall_ic/hall_detect"
 
 struct sx9320_p {
 	struct i2c_client *client;

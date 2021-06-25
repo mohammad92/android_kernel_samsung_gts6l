@@ -247,7 +247,6 @@ static ssize_t pm_test_store(struct kobject *kobj, struct kobj_attribute *attr,
 power_attr(pm_test);
 #endif /* CONFIG_PM_SLEEP_DEBUG */
 
-#ifdef CONFIG_DEBUG_FS
 static char *suspend_step_name(enum suspend_stat_step step)
 {
 	switch (step) {
@@ -268,6 +267,92 @@ static char *suspend_step_name(enum suspend_stat_step step)
 	}
 }
 
+#define suspend_attr(_name)					\
+static ssize_t _name##_show(struct kobject *kobj,		\
+		struct kobj_attribute *attr, char *buf)		\
+{								\
+	return sprintf(buf, "%d\n", suspend_stats._name);	\
+}								\
+static struct kobj_attribute _name = __ATTR_RO(_name)
+
+suspend_attr(success);
+suspend_attr(fail);
+suspend_attr(failed_freeze);
+suspend_attr(failed_prepare);
+suspend_attr(failed_suspend);
+suspend_attr(failed_suspend_late);
+suspend_attr(failed_suspend_noirq);
+suspend_attr(failed_resume);
+suspend_attr(failed_resume_early);
+suspend_attr(failed_resume_noirq);
+
+static ssize_t last_failed_dev_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	int index;
+	char *last_failed_dev = NULL;
+
+	index = suspend_stats.last_failed_dev + REC_FAILED_NUM - 1;
+	index %= REC_FAILED_NUM;
+	last_failed_dev = suspend_stats.failed_devs[index];
+
+	return sprintf(buf, "%s\n", last_failed_dev);
+}
+static struct kobj_attribute last_failed_dev = __ATTR_RO(last_failed_dev);
+
+static ssize_t last_failed_errno_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	int index;
+	int last_failed_errno;
+
+	index = suspend_stats.last_failed_errno + REC_FAILED_NUM - 1;
+	index %= REC_FAILED_NUM;
+	last_failed_errno = suspend_stats.errno[index];
+
+	return sprintf(buf, "%d\n", last_failed_errno);
+}
+static struct kobj_attribute last_failed_errno = __ATTR_RO(last_failed_errno);
+
+static ssize_t last_failed_step_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	int index;
+	enum suspend_stat_step step;
+	char *last_failed_step = NULL;
+
+	index = suspend_stats.last_failed_step + REC_FAILED_NUM - 1;
+	index %= REC_FAILED_NUM;
+	step = suspend_stats.failed_steps[index];
+	last_failed_step = suspend_step_name(step);
+
+	return sprintf(buf, "%s\n", last_failed_step);
+}
+static struct kobj_attribute last_failed_step = __ATTR_RO(last_failed_step);
+
+static struct attribute *suspend_attrs[] = {
+	&success.attr,
+	&fail.attr,
+	&failed_freeze.attr,
+	&failed_prepare.attr,
+	&failed_suspend.attr,
+	&failed_suspend_late.attr,
+	&failed_suspend_noirq.attr,
+	&failed_resume.attr,
+	&failed_resume_early.attr,
+	&failed_resume_noirq.attr,
+	&last_failed_dev.attr,
+	&last_failed_errno.attr,
+	&last_failed_step.attr,
+	NULL,
+};
+
+static struct attribute_group suspend_attr_group = {
+	.name = "suspend_stats",
+	.attrs = suspend_attrs,
+};
+
+#ifdef CONFIG_DEBUG_FS
 static int suspend_stats_show(struct seq_file *s, void *unused)
 {
 	int i, index, last_dev, last_errno, last_step;
@@ -700,11 +785,30 @@ power_attr(wake_unlock);
 
 #ifdef CONFIG_CPU_FREQ_LIMIT_USERSPACE
 #define MAX_BUF_SIZE	100
-static int cpufreq_max_limit_val = -1;
-static int cpufreq_min_limit_val = -1;
-struct cpufreq_limit_handle *cpufreq_max_hd;
-struct cpufreq_limit_handle *cpufreq_min_hd;
 DEFINE_MUTEX(cpufreq_limit_mutex);
+
+int set_freq_limit(unsigned long id, unsigned int freq)
+{
+	int ret = 0;
+	struct cpufreq_limit_handle *handle =
+							cpufreq_limit_get_handle(id);
+
+	pr_debug("%s: id(%d) freq(%d)\n", __func__, (int)id, freq);
+
+	mutex_lock(&cpufreq_limit_mutex);
+
+	if (freq != -1) {
+		ret = cpufreq_limit_get(freq, handle);
+		if (ret)
+			pr_err("%s: cpufreq_limit_get fail %lu, %u, %d\n",
+									__func__, id, freq, ret);
+	} else
+		cpufreq_limit_put(handle);
+
+	mutex_unlock(&cpufreq_limit_mutex);
+
+	return ret;
+}
 
 static ssize_t cpufreq_table_show(struct kobject *kobj,
 			struct kobj_attribute *attr, char *buf)
@@ -753,45 +857,25 @@ static ssize_t cpufreq_max_limit_show(struct kobject *kobj,
 					struct kobj_attribute *attr,
 					char *buf)
 {
-	return snprintf(buf, MAX_BUF_SIZE, "%d\n", cpufreq_max_limit_val);
+	return snprintf(buf, MAX_BUF_SIZE, "%d\n", cpufreq_limit_get_cur_max());
 }
 
 static ssize_t cpufreq_max_limit_store(struct kobject *kobj,
 					struct kobj_attribute *attr,
 					const char *buf, size_t n)
 {
-	int val;
+	int freq;
 	ssize_t ret = -EINVAL;
 
-	ret = kstrtoint(buf, 10, &val);
+	ret = kstrtoint(buf, 10, &freq);
 	if (ret < 0) {
 		pr_err("%s: Invalid cpufreq format\n", __func__);
-		goto out;
+		return ret;
 	}
 
-	mutex_lock(&cpufreq_limit_mutex);
-	if (cpufreq_max_hd) {
-		cpufreq_limit_put(cpufreq_max_hd);
-		cpufreq_max_hd = NULL;
-	}
-
-	/* big core hotplut in/out regarding max limit clock */
-	cpufreq_limit_corectl(val);
-
-	if (val != -1) {
-		cpufreq_max_hd = cpufreq_limit_max_freq(val, "user lock(max)");
-		if (IS_ERR(cpufreq_max_hd)) {
-			pr_err("%s: fail to get the handle\n", __func__);
-			cpufreq_max_hd = NULL;
-		}
-	}
-
-	cpufreq_max_hd ?
-		(cpufreq_max_limit_val = val) : (cpufreq_max_limit_val = -1);
-
-	mutex_unlock(&cpufreq_limit_mutex);
+	set_freq_limit(DVFS_USER_MAX_ID, freq);
 	ret = n;
-out:
+
 	return ret;
 }
 
@@ -799,14 +883,40 @@ static ssize_t cpufreq_min_limit_show(struct kobject *kobj,
 					struct kobj_attribute *attr,
 					char *buf)
 {
-	return snprintf(buf, MAX_BUF_SIZE, "%d\n", cpufreq_min_limit_val);
+	return snprintf(buf, MAX_BUF_SIZE, "%d\n", cpufreq_limit_get_cur_min());
 }
 
 static ssize_t cpufreq_min_limit_store(struct kobject *kobj,
 					struct kobj_attribute *attr,
 					const char *buf, size_t n)
 {
-	int val;
+	int freq;
+	ssize_t ret = -EINVAL;
+
+	ret = kstrtoint(buf, 10, &freq);
+	if (ret < 0) {
+		pr_err("%s: Invalid cpufreq format\n", __func__);
+		return ret;
+	}
+
+	set_freq_limit(DVFS_USER_MIN_ID, freq);
+	ret = n;
+
+	return ret;
+}
+
+static ssize_t over_limit_show(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					char *buf)
+{
+	return snprintf(buf, MAX_BUF_SIZE, "%d\n", cpufreq_limit_get_over_limit());
+}
+
+static ssize_t over_limit_store(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					const char *buf, size_t n)
+{
+	unsigned int val;
 	ssize_t ret = -EINVAL;
 
 	ret = kstrtoint(buf, 10, &val);
@@ -816,22 +926,7 @@ static ssize_t cpufreq_min_limit_store(struct kobject *kobj,
 	}
 
 	mutex_lock(&cpufreq_limit_mutex);
-	if (cpufreq_min_hd) {
-		cpufreq_limit_put(cpufreq_min_hd);
-		cpufreq_min_hd = NULL;
-	}
-
-	if (val != -1) {
-		cpufreq_min_hd = cpufreq_limit_min_freq(val, "user lock(min)");
-		if (IS_ERR(cpufreq_min_hd)) {
-			pr_err("%s: fail to get the handle\n", __func__);
-			cpufreq_min_hd = NULL;
-		}
-	}
-
-	cpufreq_min_hd ?
-		(cpufreq_min_limit_val = val) : (cpufreq_min_limit_val = -1);
-
+	cpufreq_limit_set_over_limit((unsigned int)val);
 	mutex_unlock(&cpufreq_limit_mutex);
 	ret = n;
 out:
@@ -841,79 +936,7 @@ out:
 power_attr(cpufreq_table);
 power_attr(cpufreq_max_limit);
 power_attr(cpufreq_min_limit);
-
-struct cpufreq_limit_list_t {
-	char name[20];
-	struct cpufreq_limit_handle *handle;
-	int id_mask;
-};
-
-struct cpufreq_limit_list_t cpufreq_limit_list[] = {
-	{
-		.name = "touch min",
-		.handle = NULL,
-		.id_mask = DVFS_TOUCH_ID_MASK
-	},
-	{
-		.name = "finger min",
-		.handle = NULL,
-		.id_mask = DVFS_FINGER_ID_MASK
-	},
-	{
-		.name = "multi-touch min",
-		.handle = NULL,
-		.id_mask = DVFS_MULTI_TOUCH_ID_MASK
-	},
-	{
-		.name = "argos min",
-		.handle = NULL,
-		.id_mask = DVFS_ARGOS_ID_MASK
-	},
-#ifdef CONFIG_USB_AUDIO_ENHANCED_DETECT_TIME
-	{
-		.name = "boost-host min",
-		.handle = NULL,
-		.id_mask = DVFS_BOOST_HOST_ID_MASK
-	},
-#endif
-};
-
-int set_freq_limit(unsigned long id, unsigned int freq)
-{
-	ssize_t ret = -EINVAL;
-	int mask = (1 << id);
-	size_t i;
-	struct cpufreq_limit_list_t *list;
-
-	mutex_lock(&cpufreq_limit_mutex);
-
-	pr_debug("%s: id(%d) freq(%d)\n", __func__, (int)id, freq);
-
-	for (i = 0; i < ARRAY_SIZE(cpufreq_limit_list); i++) {
-		list = &cpufreq_limit_list[i];
-		/* min lock */
-		if (list->id_mask & mask) {
-			if (freq != -1) {
-				list->handle = cpufreq_limit_min_freq(freq,
-								list->name);
-				if (IS_ERR(list->handle)) {
-					pr_err("%s: fail to get the handle\n",
-								__func__);
-					list->handle = NULL;
-					goto out;
-				}
-			} else if (list->handle) {
-				cpufreq_limit_put(list->handle);
-				list->handle = NULL;
-			}
-		}
-	}
-	ret = 0;
-
-out:
-	mutex_unlock(&cpufreq_limit_mutex);
-	return ret;
-}
+power_attr(over_limit);
 #endif
 
 #ifdef CONFIG_PM_TRACE
@@ -1083,6 +1106,7 @@ static struct attribute * g[] = {
 	&cpufreq_table_attr.attr,
 	&cpufreq_max_limit_attr.attr,
 	&cpufreq_min_limit_attr.attr,
+	&over_limit_attr.attr,
 #endif
 #ifdef CONFIG_FREEZER
 	&pm_freeze_timeout_attr.attr,
@@ -1099,6 +1123,14 @@ static struct attribute * g[] = {
 
 static const struct attribute_group attr_group = {
 	.attrs = g,
+};
+
+static const struct attribute_group *attr_groups[] = {
+	&attr_group,
+#ifdef CONFIG_PM_SLEEP
+	&suspend_attr_group,
+#endif
+	NULL,
 };
 
 struct workqueue_struct *pm_wq;
@@ -1153,7 +1185,7 @@ static int __init pm_init(void)
 	power_kobj = kobject_create_and_add("power", NULL);
 	if (!power_kobj)
 		return -ENOMEM;
-	error = sysfs_create_group(power_kobj, &attr_group);
+	error = sysfs_create_groups(power_kobj, attr_groups);
 	if (error)
 		return error;
 	pm_print_times_init();

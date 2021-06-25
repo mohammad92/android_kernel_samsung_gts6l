@@ -1473,6 +1473,8 @@ static void enter_factory_mode(struct fts_ts_info *info, bool fac_mode)
 	}
 
 	fts_set_scanmode(info, info->scan_mode);
+
+	fts_delay(50);
 }
 
 static int fts_check_index(struct fts_ts_info *info)
@@ -2337,10 +2339,13 @@ void fts_checking_miscal(struct fts_ts_info *info)
 	if (max > miscal_thd)
 		info->miscal_result = MISCAL_FAIL;
 
+	if (min < -miscal_thd)
+		info->miscal_result = MISCAL_FAIL;
+
 	fts_set_scanmode(info, info->scan_mode);
 
-	input_raw_info_d(true, &info->client->dev, "%s: mis cal threshold:%d, max value:%d, miscal:%s\n",
-			__func__, miscal_thd, max, info->miscal_result == MISCAL_PASS ? "PASS" : "FAIL");
+	input_raw_info_d(true, &info->client->dev, "%s: mis cal threshold:%d/%d, min/max :%d/%d, miscal:%s\n",
+			__func__, miscal_thd, -miscal_thd, min, max, info->miscal_result == MISCAL_PASS ? "PASS" : "FAIL");
 }
 
 int fts_panel_ito_test(struct fts_ts_info *info, int testmode)

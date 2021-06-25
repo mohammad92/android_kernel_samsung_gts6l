@@ -121,4 +121,15 @@ enum {
 };
 #endif
 
+// for ssc_core sensor type
+enum {
+	OPTION_TYPE_SSC_CHARGING_STATE,    // for pocket mode
+	OPTION_TYPE_SSC_ABS_LCD_TYPE,      // for pocket mode
+	OPTION_TYPE_SSC_LCD_TYPE,          // for pocket mode
+	OPTION_TYPE_SSC_DUMP_TYPE,         // for pocket mode
+	OPTION_TYPE_SSC_AOD_RECT,          // for AOD
+	OPTION_TYPE_SSC_AOD_LIGHT_CIRCLE,  // for AOD
+	OPTION_TYPE_SSC_MAX
+};
+
 #endif

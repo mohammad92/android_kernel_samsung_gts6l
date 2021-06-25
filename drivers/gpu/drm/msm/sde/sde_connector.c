@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -24,7 +24,7 @@
 #include "sde_crtc.h"
 #include "sde_rm.h"
 
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 #include "ss_dsi_panel_common.h"
 #endif
 
@@ -38,9 +38,6 @@
 
 #define SDE_ERROR_CONN(c, fmt, ...) SDE_ERROR("conn%d " fmt,\
 		(c) ? (c)->base.base.id : -1, ##__VA_ARGS__)
-static u32 dither_matrix[DITHER_MATRIX_SZ] = {
-	15, 7, 13, 5, 3, 11, 1, 9, 12, 4, 14, 6, 0, 8, 2, 10
-};
 
 static const struct drm_prop_enum_list e_topology_name[] = {
 	{SDE_RM_TOPOLOGY_NONE,	"sde_none"},
@@ -79,7 +76,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	int bl_lvl;
 	struct drm_event event;
 	int rc = 0;
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	struct samsung_display_driver_data *vdd;
 #endif
 
@@ -101,7 +98,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 
 	if (!bl_lvl && brightness)
 		bl_lvl = 1;
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	vdd = display->panel->panel_private;
 	if((bd->props.power == FB_BLANK_POWERDOWN) && (vdd->dtsi_data.num_of_data_lanes == 1)) {	
 		c_conn->unset_bl_level = bl_lvl;
@@ -109,8 +106,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 		return -EINVAL;
 	}
 #endif
-	if (display->panel->bl_config.bl_update ==
-		BL_UPDATE_DELAY_UNTIL_FIRST_FRAME && !c_conn->allow_bl_update) {
+	if (!c_conn->allow_bl_update) {
 		c_conn->unset_bl_level = bl_lvl;
 		return 0;
 	}
@@ -161,7 +157,7 @@ static int sde_backlight_setup(struct sde_connector *c_conn,
 	display = (struct dsi_display *) c_conn->display;
 	bl_config = &display->panel->bl_config;
 	props.max_brightness = bl_config->brightness_max_level;
-#if defined(CONFIG_DISPLAY_SAMSUNG)//JSJEONG need to check
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	props.brightness = bl_config->bl_level;
 #else
 	props.brightness = bl_config->brightness_default_level;
@@ -258,60 +254,12 @@ void sde_connector_unregister_event(struct drm_connector *connector,
 	(void)sde_connector_register_event(connector, event_idx, 0, 0);
 }
 
-static int _sde_connector_get_default_dither_cfg_v1(
-		struct sde_connector *c_conn, void *cfg)
-{
-	struct drm_msm_dither *dither_cfg = (struct drm_msm_dither *)cfg;
-	enum dsi_pixel_format dst_format = DSI_PIXEL_FORMAT_MAX;
-
-	if (!c_conn || !cfg) {
-		SDE_ERROR("invalid argument(s), c_conn %pK, cfg %pK\n",
-				c_conn, cfg);
-		return -EINVAL;
-	}
-
-	if (!c_conn->ops.get_dst_format) {
-		SDE_DEBUG("get_dst_format is unavailable\n");
-		return 0;
-	}
-
-	dst_format = c_conn->ops.get_dst_format(&c_conn->base, c_conn->display);
-	switch (dst_format) {
-	case DSI_PIXEL_FORMAT_RGB888:
-		dither_cfg->c0_bitdepth = 8;
-		dither_cfg->c1_bitdepth = 8;
-		dither_cfg->c2_bitdepth = 8;
-		dither_cfg->c3_bitdepth = 8;
-		break;
-	case DSI_PIXEL_FORMAT_RGB666:
-	case DSI_PIXEL_FORMAT_RGB666_LOOSE:
-		dither_cfg->c0_bitdepth = 6;
-		dither_cfg->c1_bitdepth = 6;
-		dither_cfg->c2_bitdepth = 6;
-		dither_cfg->c3_bitdepth = 6;
-		break;
-	default:
-		SDE_DEBUG("no default dither config for dst_format %d\n",
-			dst_format);
-		return -ENODATA;
-	}
-
-	memcpy(&dither_cfg->matrix, dither_matrix,
-			sizeof(u32) * DITHER_MATRIX_SZ);
-	dither_cfg->temporal_en = 0;
-	return 0;
-}
-
 static void _sde_connector_install_dither_property(struct drm_device *dev,
 		struct sde_kms *sde_kms, struct sde_connector *c_conn)
 {
 	char prop_name[DRM_PROP_NAME_LEN];
 	struct sde_mdss_cfg *catalog = NULL;
-	struct drm_property_blob *blob_ptr;
-	void *cfg;
-	int ret = 0;
-	u32 version = 0, len = 0;
-	bool defalut_dither_needed = false;
+	u32 version = 0;
 
 	if (!dev || !sde_kms || !c_conn) {
 		SDE_ERROR("invld args (s), dev %pK, sde_kms %pK, c_conn %pK\n",
@@ -329,54 +277,51 @@ static void _sde_connector_install_dither_property(struct drm_device *dev,
 		msm_property_install_blob(&c_conn->property_info, prop_name,
 			DRM_MODE_PROP_BLOB,
 			CONNECTOR_PROP_PP_DITHER);
-		len = sizeof(struct drm_msm_dither);
-		cfg = kzalloc(len, GFP_KERNEL);
-		if (!cfg)
-			return;
-
-		ret = _sde_connector_get_default_dither_cfg_v1(c_conn, cfg);
-		if (!ret)
-			defalut_dither_needed = true;
 		break;
 	default:
 		SDE_ERROR("unsupported dither version %d\n", version);
 		return;
 	}
-
-	if (defalut_dither_needed) {
-		blob_ptr = drm_property_create_blob(dev, len, cfg);
-		if (IS_ERR_OR_NULL(blob_ptr))
-			goto exit;
-		c_conn->blob_dither = blob_ptr;
-	}
-exit:
-	kfree(cfg);
 }
 
 int sde_connector_get_dither_cfg(struct drm_connector *conn,
 			struct drm_connector_state *state, void **cfg,
-			size_t *len)
+			size_t *len, bool idle_pc)
 {
 	struct sde_connector *c_conn = NULL;
 	struct sde_connector_state *c_state = NULL;
 	size_t dither_sz = 0;
+	bool is_dirty;
 	u32 *p = (u32 *)cfg;
 
-	if (!conn || !state || !p)
+	if (!conn || !state || !p) {
+		SDE_ERROR("invalid arguments\n");
 		return -EINVAL;
+	}
 
 	c_conn = to_sde_connector(conn);
 	c_state = to_sde_connector_state(state);
 
-	/* try to get user config data first */
-	*cfg = msm_property_get_blob(&c_conn->property_info,
-					&c_state->property_state,
-					&dither_sz,
-					CONNECTOR_PROP_PP_DITHER);
-	/* if user config data doesn't exist, use default dither blob */
-	if (*cfg == NULL && c_conn->blob_dither) {
-		*cfg = &c_conn->blob_dither->data;
-		dither_sz = c_conn->blob_dither->length;
+	is_dirty = msm_property_is_dirty(&c_conn->property_info,
+			&c_state->property_state,
+			CONNECTOR_PROP_PP_DITHER);
+
+	if (!is_dirty && !idle_pc) {
+		return -ENODATA;
+	} else if (is_dirty || idle_pc) {
+		*cfg = msm_property_get_blob(&c_conn->property_info,
+				&c_state->property_state,
+				&dither_sz,
+				CONNECTOR_PROP_PP_DITHER);
+		/*
+		 * In idle_pc use case return early, when dither is
+		 * already disabled.
+		 */
+		if (idle_pc && *cfg == NULL)
+			return -ENODATA;
+		/* disable dither based on user config data */
+		else if (*cfg == NULL)
+			return 0;
 	}
 	*len = dither_sz;
 	return 0;
@@ -464,7 +409,7 @@ void sde_connector_schedule_status_work(struct drm_connector *connector,
 			interval = c_conn->esd_status_interval ?
 				c_conn->esd_status_interval :
 					STATUS_CHECK_INTERVAL_MS;
-#if !defined(CONFIG_DISPLAY_SAMSUNG)
+#if !(defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO))
 			/* Schedule ESD status check */
 			schedule_delayed_work(&c_conn->status_work,
 				msecs_to_jiffies(interval));
@@ -513,7 +458,7 @@ static int _sde_connector_update_power_locked(struct sde_connector *c_conn)
 	SDE_INFO("conn %d - dpms %d, lp %d, panel %d\n", connector->base.id,
 			c_conn->dpms_mode, c_conn->lp_mode, mode);
 
-#if !defined(CONFIG_DISPLAY_SAMSUNG) /* QC Original */
+#if !(defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)) /* QC Original */
 	if (mode != c_conn->last_panel_power_mode && c_conn->ops.set_power) {
 #else /* SS Modify */
 	if (mode != c_conn->last_panel_power_mode && c_conn->ops.set_power
@@ -560,8 +505,7 @@ static int _sde_connector_update_bl_scale(struct sde_connector *c_conn)
 
 	bl_config = &dsi_display->panel->bl_config;
 
-	if (dsi_display->panel->bl_config.bl_update ==
-		BL_UPDATE_DELAY_UNTIL_FIRST_FRAME && !c_conn->allow_bl_update) {
+	if (!c_conn->allow_bl_update) {
 		c_conn->unset_bl_level = bl_config->bl_level;
 		return 0;
 	}
@@ -671,7 +615,7 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 	struct sde_connector_state *c_state;
 	struct msm_display_kickoff_params params;
 	int rc;
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	struct dsi_display *display;
 	struct samsung_display_driver_data *vdd;
 	u32 finger_mask_state;
@@ -701,7 +645,7 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 	params.rois = &c_state->rois;
 	params.hdr_meta = &c_state->hdr_meta;
 
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	/* SAMSUNG_FINGERPRINT */
 	display = c_conn->display;
 	vdd = display->panel->panel_private;
@@ -765,21 +709,31 @@ void sde_connector_helper_bridge_disable(struct drm_connector *connector)
 {
 	int rc;
 	struct sde_connector *c_conn = NULL;
+	struct dsi_display *display;
+	bool poms_pending = false;
 
 	if (!connector)
 		return;
 
-	rc = _sde_connector_update_dirty_properties(connector);
-	if (rc) {
-		SDE_ERROR("conn %d final pre kickoff failed %d\n",
-				connector->base.id, rc);
-		SDE_EVT32(connector->base.id, SDE_EVTLOG_ERROR);
+	c_conn = to_sde_connector(connector);
+
+	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI) {
+		display = (struct dsi_display *) c_conn->display;
+		poms_pending = display->poms_pending;
+	}
+
+	if (!poms_pending) {
+		rc = _sde_connector_update_dirty_properties(connector);
+		if (rc) {
+			SDE_ERROR("conn %d final pre kickoff failed %d\n",
+					connector->base.id, rc);
+			SDE_EVT32(connector->base.id, SDE_EVTLOG_ERROR);
+		}
 	}
 
 	/* Disable ESD thread */
 	sde_connector_schedule_status_work(connector, false);
 
-	c_conn = to_sde_connector(connector);
 	if (c_conn->bl_device) {
 		c_conn->bl_device->props.power = FB_BLANK_POWERDOWN;
 		c_conn->bl_device->props.state |= BL_CORE_FBBLANK;
@@ -793,6 +747,10 @@ void sde_connector_helper_bridge_enable(struct drm_connector *connector)
 {
 	struct sde_connector *c_conn = NULL;
 	struct dsi_display *display;
+
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+	struct samsung_display_driver_data *vdd;
+#endif
 
 	if (!connector)
 		return;
@@ -815,7 +773,17 @@ void sde_connector_helper_bridge_enable(struct drm_connector *connector)
 	if (c_conn->bl_device) {
 		c_conn->bl_device->props.power = FB_BLANK_UNBLANK;
 		c_conn->bl_device->props.state &= ~BL_CORE_FBBLANK;
+#if defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
+		vdd = display->panel->panel_private;
+
+		if (vdd->vrr.support_vrr_based_bl &&
+				(vdd->vrr.running_vrr_mdp || vdd->vrr.running_vrr))
+			LCD_INFO("skip brightness update during VRR\n");
+		else
+			backlight_update_status(c_conn->bl_device);
+#else
 		backlight_update_status(c_conn->bl_device);
+#endif
 	}
 	c_conn->panel_dead = false;
 }
@@ -1305,7 +1273,7 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 
 	if (idx == CONNECTOR_PROP_HDR_METADATA) {
 		rc = _sde_connector_set_ext_hdr_info(c_conn,
-			c_state, (void *)(uintptr_t)val);
+			c_state, (void __user *)(uintptr_t)val);
 		if (rc)
 			SDE_ERROR_CONN(c_conn, "cannot set hdr info %d\n", rc);
 	}
@@ -1912,16 +1880,18 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 	c_conn = to_sde_connector(connector);
 	c_state = to_sde_connector_state(new_conn_state);
 
-	crtc_state = drm_atomic_get_new_crtc_state(new_conn_state->state,
-						   new_conn_state->crtc);
+	if (new_conn_state->crtc) {
+		crtc_state = drm_atomic_get_new_crtc_state(
+			new_conn_state->state, new_conn_state->crtc);
 
-	qsync_dirty = msm_property_is_dirty(&c_conn->property_info,
+		qsync_dirty = msm_property_is_dirty(&c_conn->property_info,
 					&c_state->property_state,
 					CONNECTOR_PROP_QSYNC_MODE);
 
-	if (drm_atomic_crtc_needs_modeset(crtc_state) && qsync_dirty) {
-		SDE_ERROR("invalid qsync update during modeset\n");
-		return -EINVAL;
+		if (drm_atomic_crtc_needs_modeset(crtc_state) && qsync_dirty) {
+			SDE_ERROR("invalid qsync update during modeset\n");
+			return -EINVAL;
+		}
 	}
 
 	if (c_conn->ops.atomic_check)
@@ -1957,7 +1927,7 @@ static void _sde_connector_report_panel_dead(struct sde_connector *conn,
 	SDE_EVT32(SDE_EVTLOG_ERROR);
 	SDE_ERROR("esd check failed report PANEL_DEAD conn_id: %d enc_id: %d\n",
 			conn->base.base.id, conn->encoder->base.id);
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	{
 		struct dsi_display *display = conn->display;
 		struct samsung_display_driver_data *vdd = display->panel->panel_private;
@@ -1989,7 +1959,7 @@ int sde_connector_esd_status(struct drm_connector *conn)
 		return -ETIMEDOUT;
 	}
 	
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 	ret = sde_conn->ops.check_status(&sde_conn->base, sde_conn->display,
 								false);
 #else
@@ -2044,7 +2014,7 @@ static void sde_connector_check_status_work(struct work_struct *work)
 		/* If debugfs property is not set then take default value */
 		interval = conn->esd_status_interval ?
 			conn->esd_status_interval : STATUS_CHECK_INTERVAL_MS;
-#if !defined(CONFIG_DISPLAY_SAMSUNG)
+#if !(defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO))
 		schedule_delayed_work(&conn->status_work,
 			msecs_to_jiffies(interval));
 #endif
@@ -2437,7 +2407,7 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 	msm_property_install_range(&c_conn->property_info, "bl_scale",
 		0x0, 0, MAX_BL_SCALE_LEVEL, MAX_BL_SCALE_LEVEL,
 		CONNECTOR_PROP_BL_SCALE);
-#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_DISPLAY_SAMSUNG) || defined(CONFIG_DISPLAY_SAMSUNG_LEGO)
 		/* SAMSUNG_FINGERPRINT */
 	msm_property_install_range(&c_conn->property_info, "fingerprint_mask",
 		0x0, 0, 100, 0,

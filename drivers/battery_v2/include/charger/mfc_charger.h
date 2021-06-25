@@ -24,13 +24,13 @@
 #include <linux/alarmtimer.h>
 #include "../sec_charging_common.h"
 
-#define MFC_FW_BIN_VERSION			0x138
-#define MFC_FW_BIN_FULL_VERSION		0x01380000
+#define MFC_FW_BIN_VERSION			0x142
+#define MFC_FW_BIN_FULL_VERSION		0x01420000
 #define MFC_FW_BIN_VERSION_ADDR		0x0084 //fw rev85 address
 #define MTP_MAX_PROGRAM_SIZE 0x4000
 #define MTP_VERIFY_ADDR			0x0000
 #define MTP_VERIFY_SIZE			0x4680
-#define MTP_VERIFY_CHKSUM		0x02D26
+#define MTP_VERIFY_CHKSUM		0xC068
 
 #define MFC_FLASH_FW_HEX_PATH		"mfc/mfc_fw_flash.bin"
 #define MFC_FW_SDCARD_BIN_PATH		"/sdcard/mfc_fw_flash.bin"
@@ -1067,6 +1067,7 @@ struct mfc_charger_data {
 	struct device					*dev;
 	mfc_charger_platform_data_t 	*pdata;
 	struct mutex io_lock;
+	struct mutex wpc_en_lock;
 	const struct firmware *firm_data_bin;
 
 	int wc_w_state;
@@ -1080,6 +1081,7 @@ struct mfc_charger_data {
 	struct wake_lock wpc_tx_opfq_lock;
 	struct wake_lock wpc_afc_vout_lock;
 	struct wake_lock wpc_vout_mode_lock;
+	struct wake_lock wpc_rx_connection_lock;
 	struct wake_lock wpc_rx_det_lock;
 	struct wake_lock wpc_tx_phm_lock;
 	struct wake_lock wpc_vrect_check_lock;
@@ -1152,5 +1154,11 @@ struct mfc_charger_data {
 	u8 device_event;
 	int i2c_error_count;
 	unsigned long gear_start_time;
+	int wpc_en_flag;
+	int tx_gear_phm;
+
+	struct mutex fw_lock;
+	unsigned long fw_size;
+	u8 *fw_img;
 };
 #endif /* __WIRELESS_CHARGER_MFC_H */

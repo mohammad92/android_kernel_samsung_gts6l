@@ -28,6 +28,8 @@
 #include <linux/device.h>
 #include <linux/poll.h>
 #include <linux/ccic/s2mu107_misc.h>
+#include <linux/ccic/usbpd.h>
+#include "../battery_v2/include/sec_charging_common.h"
 
 static struct ccic_misc_dev *c_dev;
 
@@ -64,13 +66,17 @@ static int ccic_misc_open(struct inode *inode, struct file *file)
 		ret = -ENODEV;
 		goto err;
 	}
-
 	if (_lock(&c_dev->open_excl)) {
 		pr_err("%s - error : device busy\n", __func__);
 		ret = -EBUSY;
 		goto err1;
 	}
-
+	if (!sec_pps_control(0)) {
+		_unlock(&c_dev->open_excl);
+		pr_err("%s - error : psrdy is not done\n", __func__);
+		ret = -EBUSY;
+		goto err;
+	}
 	if (!samsung_uvdm_ready()) {
 		// check if there is some connection
 		_unlock(&c_dev->open_excl);
@@ -78,9 +84,7 @@ static int ccic_misc_open(struct inode *inode, struct file *file)
 		ret = -EBUSY;
 		goto err1;
 	}
-
 	pr_info("%s - open success\n", __func__);
-
 	return 0;
 err1:
 err:
@@ -92,6 +96,7 @@ static int ccic_misc_close(struct inode *inode, struct file *file)
 	if (c_dev)
 		_unlock(&c_dev->open_excl);
 	samsung_uvdm_close();
+	sec_pps_control(1);
 	pr_info("%s - close success\n", __func__);
 	return 0;
 }

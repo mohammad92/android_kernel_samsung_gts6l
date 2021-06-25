@@ -998,3 +998,12 @@ config TX_5V_DISABLE
     default n
     help
 	  Say Y to enable CONFIG_TX_5V_DISABLE
+
+config TX_GEAR_PHM_VOUT_CTRL
+    bool "control vout when gear`s phm"
+    default n
+    help
+	  Say Y to enable CONFIG_TX_GEAR_PHM_VOUT_CTRL
+	  Control vout 5v when enter gear`s phm with high voltage wired charging
+	  Recover vout when escape gear`s phm
+	  This is considered only if high vout with gear.

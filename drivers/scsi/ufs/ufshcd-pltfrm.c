@@ -501,7 +501,7 @@ int ufshcd_pltfrm_init(struct platform_device *pdev,
 		goto out;
 	}
 
-	phy_res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	phy_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ufs_phy");
 	phy_base = devm_ioremap(&pdev->dev,
 			phy_res->start,
 			resource_size(phy_res));

@@ -28,10 +28,12 @@
 static int get_dd_file_key(struct dd_crypt_context *crypt_context,
 		struct fscrypt_key *dd_master_key, unsigned char *raw_key);
 
-extern int fscrypt_get_encryption_kek(struct inode *inode,
-								struct fscrypt_info *crypt_info,
-								struct fscrypt_key *kek);
-extern int fscrypt_get_encryption_key(struct inode *inode, struct fscrypt_key *key);
+extern int fscrypt_get_encryption_kek(
+						struct fscrypt_info *crypt_info,
+						struct fscrypt_key *kek);
+extern int fscrypt_get_encryption_key(
+						struct fscrypt_info *crypt_info,
+						struct fscrypt_key *key);
 
 #define DD_CRYPT_MODE_INVALID     0
 #define DD_CRYPT_MODE_AES_256_XTS 1
@@ -251,7 +253,10 @@ int dd_add_master_key(int userid, void *key, int len) {
 	struct dd_master_key *mk = NULL;
 	struct list_head *entry;
 
-	BUG_ON(len != sizeof(struct fscrypt_key));
+	if (len != sizeof(struct fscrypt_key)) {
+		dd_error("failed to add master key: len error");
+		return -EINVAL;
+	}
 
 	list_for_each(entry, &dd_master_key_head) {
 		struct dd_master_key *k = list_entry(entry, struct dd_master_key, list);
@@ -271,6 +276,12 @@ int dd_add_master_key(int userid, void *key, int len) {
 	mk->userid = userid;
 
 	memcpy(&mk->key, key, sizeof(struct fscrypt_key));
+	if (mk->key.size > FSCRYPT_MAX_KEY_SIZE) {
+		//handle wrong size
+		dd_error("failed to add master key: size error");
+		kzfree(mk);
+		return -EINVAL;
+	}
 	spin_lock(&dd_master_key_lock);
 	list_add_tail(&mk->list, &dd_master_key_head);
 	spin_unlock(&dd_master_key_lock);
@@ -383,7 +394,7 @@ int dd_dump_key(int userid, int fd)
 	/**
 	 * DUMPM KEY FOR OUTER LAYER
 	 */
-	rc = fscrypt_get_encryption_kek(inode, inode->i_crypt_info, &dd_outer_master_key);
+	rc = fscrypt_get_encryption_kek(inode->i_crypt_info, &dd_outer_master_key);
 	if (rc) {
 		dd_error("[DUALDAR_DUMP] failed to retrieve outer master key, rc : %d\n", rc);
 		goto out;
@@ -391,7 +402,7 @@ int dd_dump_key(int userid, int fd)
 	dd_hex_key_dump("[DUALDAR_DUMP] OUTER LAYER MASTER KEY", dd_outer_master_key.raw, dd_outer_master_key.size);
 
 	memset(&dd_outer_file_encryption_key, 0, sizeof(dd_outer_file_encryption_key));
-	rc = fscrypt_get_encryption_key(inode, &dd_outer_file_encryption_key);
+	rc = fscrypt_get_encryption_key(inode->i_crypt_info, &dd_outer_file_encryption_key);
 	if (rc) {
 		dd_error("[DUALDAR_DUMP] failed to retrieve outer fek, rc:%d\n", rc);
 		goto out;

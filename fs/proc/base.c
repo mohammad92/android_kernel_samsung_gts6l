@@ -100,6 +100,7 @@
 #ifdef CONFIG_HARDWALL
 #include <asm/hardwall.h>
 #endif
+#include <linux/cn_proc.h>
 #include <trace/events/oom.h>
 #include "internal.h"
 #include "fd.h"
@@ -1772,8 +1773,10 @@ static ssize_t comm_write(struct file *file, const char __user *buf,
 	if (!p)
 		return -ESRCH;
 
-	if (same_thread_group(current, p))
+	if (same_thread_group(current, p)) {
 		set_task_comm(p, buffer);
+		proc_comm_connector(p);
+	}
 	else
 		count = -EINVAL;
 
@@ -2963,6 +2966,9 @@ static int do_io_accounting(struct task_struct *task, struct seq_file *m, int wh
 		   "syscw: %llu\n"
 		   "read_bytes: %llu\n"
 		   "write_bytes: %llu\n"
+#ifdef CONFIG_SUBMIT_BH_IO_ACCOUNTING_DEBUG
+		   "submit_bh_write_bytes: %llu\n"
+#endif
 		   "cancelled_write_bytes: %llu\n",
 		   (unsigned long long)acct.rchar,
 		   (unsigned long long)acct.wchar,
@@ -2970,6 +2976,9 @@ static int do_io_accounting(struct task_struct *task, struct seq_file *m, int wh
 		   (unsigned long long)acct.syscw,
 		   (unsigned long long)acct.read_bytes,
 		   (unsigned long long)acct.write_bytes,
+#ifdef CONFIG_SUBMIT_BH_IO_ACCOUNTING_DEBUG
+		   (unsigned long long)acct.submit_bh_write_bytes,
+#endif
 		   (unsigned long long)acct.cancelled_write_bytes);
 	result = 0;
 
@@ -3110,6 +3119,9 @@ static ssize_t proc_sched_task_boost_period_write(struct file *file,
 	char buffer[PROC_NUMBUF];
 	unsigned int sched_boost_period;
 	int err;
+
+	if (!task)
+		return -ESRCH;
 
 	memset(buffer, 0, sizeof(buffer));
 	if (count > sizeof(buffer) - 1)
@@ -3605,7 +3617,6 @@ static const struct pid_entry tgid_base_stuff[] = {
 	REG("maps",       S_IRUGO, proc_pid_maps_operations),
 #ifdef CONFIG_PAGE_BOOST
 	REG("filemap_list",       S_IRUGO, proc_pid_filemap_list_operations),
-	REG("filemap_info",       S_IRUGO|S_IWUGO, proc_pid_filemap_info_operations),
 	ONE("ioinfo",  S_IRUGO, proc_pid_ioinfo),
 #ifdef CONFIG_PAGE_BOOST_RECORDING
 	REG("io_record_control",      S_IRUGO|S_IWUGO, proc_pid_io_record_operations),
@@ -3711,6 +3722,15 @@ static const struct file_operations proc_tgid_base_operations = {
 	.iterate_shared	= proc_tgid_base_readdir,
 	.llseek		= generic_file_llseek,
 };
+
+struct pid *tgid_pidfd_to_pid(const struct file *file)
+{
+	if (!d_is_dir(file->f_path.dentry) ||
+	    (file->f_op != &proc_tgid_base_operations))
+		return ERR_PTR(-EBADF);
+
+	return proc_pid(file_inode(file));
+}
 
 static struct dentry *proc_tgid_base_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
 {

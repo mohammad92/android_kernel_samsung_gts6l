@@ -77,26 +77,31 @@ extern char *sec_cable_type[];
 #endif
 #define SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_2ND			0x000010
 #define SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_3RD			0x000008
-#define SEC_BAT_CURRENT_EVENT_SWELLING_MODE		(SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_2ND | SEC_BAT_CURRENT_EVENT_HIGH_TEMP_SWELLING | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_3RD)
-#define SEC_BAT_CURRENT_EVENT_LOW_TEMP_MODE		(SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_2ND | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_3RD)
+#define SEC_BAT_CURRENT_EVENT_SWELLING_MODE		(SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_2ND | SEC_BAT_CURRENT_EVENT_HIGH_TEMP_SWELLING | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_3RD | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_4TH | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_5TH)
+#define SEC_BAT_CURRENT_EVENT_LOW_TEMP_MODE		(SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_2ND | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_3RD | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_4TH | SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_5TH)
 #define SEC_BAT_CURRENT_EVENT_USB_SUPER			0x000100
 #define SEC_BAT_CURRENT_EVENT_CHG_LIMIT			0x000200
-#define SEC_BAT_CURRENT_EVENT_CALL				0x000400
-#define SEC_BAT_CURRENT_EVENT_SLATE				0x000800
+#define SEC_BAT_CURRENT_EVENT_CALL			0x000400
+#define SEC_BAT_CURRENT_EVENT_SLATE			0x000800
 #define SEC_BAT_CURRENT_EVENT_VBAT_OVP			0x001000
 #define SEC_BAT_CURRENT_EVENT_VSYS_OVP			0x002000
 #define SEC_BAT_CURRENT_EVENT_WPC_VOUT_LOCK		0x004000
-#define SEC_BAT_CURRENT_EVENT_AICL				0x008000
+#define SEC_BAT_CURRENT_EVENT_AICL			0x008000
 #define SEC_BAT_CURRENT_EVENT_HV_DISABLE		0x010000
 #define SEC_BAT_CURRENT_EVENT_SELECT_PDO		0x020000
 #define SEC_BAT_CURRENT_EVENT_FG_RESET			0x040000
 #define SEC_BAT_CURRENT_EVENT_WDT_EXPIRED		0x080000
 #define SEC_BAT_CURRENT_EVENT_SAFETY_TMR		0x100000
-#define SEC_BAT_CURRENT_EVENT_ISDB				0x200000
+#define SEC_BAT_CURRENT_EVENT_ISDB			0x200000
 #define SEC_BAT_CURRENT_EVENT_DC_ERR			0x400000
 #define SEC_BAT_CURRENT_EVENT_SIOP_LIMIT		0x800000
-#define SEC_BAT_CURRENT_EVENT_TEMP_CTRL_TEST	0x1000000
+#define SEC_BAT_CURRENT_EVENT_TEMP_CTRL_TEST		0x1000000
 #define SEC_BAT_CURRENT_EVENT_25W_OCP			0x2000000
+#define SEC_BAT_CURRENT_EVENT_SEND_UVDM			0x8000000
+
+#define SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_4TH	0x10000000
+#define SEC_BAT_CURRENT_EVENT_LOW_TEMP_SWELLING_5TH	0x20000000
+#define SEC_BAT_CURRENT_EVENT_WPC_EN		0x40000000
 
 /* misc_event */
 #define BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE	0x00000001
@@ -112,6 +117,7 @@ extern char *sec_cable_type[];
 #define BATT_MISC_EVENT_WIRELESS_AUTH_PASS      0x00001000
 #define BATT_MISC_EVENT_TEMP_HICCUP_TYPE	0x00002000
 #define BATT_MISC_EVENT_BATTERY_HEALTH			0x000F0000
+#define BATT_MISC_EVENT_HEALTH_OVERHEATLIMIT		0x00100000
 
 #define BATTERY_HEALTH_SHIFT                16
 enum misc_battery_health {
@@ -173,6 +179,12 @@ enum misc_battery_health {
 #define HV_CHARGER_STATUS_STANDARD3 24500 /* mW */
 #define HV_CHARGER_STATUS_STANDARD4 40000 /* mW */
 
+#if defined(CONFIG_TABLET_MODEL_CONCEPT) && !defined(CONFIG_SEC_FACTORY)
+#define SLOW_CHARGING_CURRENT_STANDARD          1000
+#else
+#define SLOW_CHARGING_CURRENT_STANDARD          400
+#endif
+
 enum {
 	NORMAL_TA,
 	AFC_9V_OR_15W,
@@ -195,8 +207,9 @@ struct sec_bat_pdic_info {
 #endif
 };
 
+#define MAX_PDO_NUM 8
 struct sec_bat_pdic_list {
-	struct sec_bat_pdic_info pd_info[8]; /* 5V ~ 12V */
+	struct sec_bat_pdic_info pd_info[MAX_PDO_NUM]; /* 5V ~ 12V */
 	unsigned int now_pd_index;
 	unsigned int max_pd_count;
 #if defined(CONFIG_PDIC_PD30)
@@ -296,6 +309,8 @@ struct sec_battery_info {
 	struct pdic_notifier_struct pdic_info;
 	struct sec_bat_pdic_list pd_list;
 #endif
+	bool update_pd_list;
+
 #if defined(CONFIG_VBUS_NOTIFIER)
 	struct notifier_block vbus_nb;
 	int muic_vbus_status;
@@ -590,6 +605,8 @@ struct sec_battery_info {
 	unsigned int swelling_mode;
 	int swelling_full_check_cnt;
 	bool swelling_low_temp_3rd_ctrl;
+	bool swelling_low_temp_4th_ctrl;
+	bool swelling_low_temp_5th_ctrl;	
 #endif
 #if defined(CONFIG_AFC_CHARGER_MODE)
 	char *hv_chg_name;
@@ -669,6 +686,8 @@ struct sec_battery_info {
 #if defined(CONFIG_ENG_BATTERY_CONCEPT)
 	char * get_dt_str;
 #endif
+
+	bool support_unknown_wpcthm;
 };
 
 /* event check */
@@ -776,5 +795,4 @@ void sec_bat_parse_mode_dt(struct sec_battery_info *battery);
 void sec_bat_parse_mode_dt_work(struct work_struct *work);
 u8 sec_bat_get_wireless20_power_class(struct sec_battery_info *battery);
 void sec_bat_check_battery_health(struct sec_battery_info *battery);
-
 #endif /* __SEC_BATTERY_H */

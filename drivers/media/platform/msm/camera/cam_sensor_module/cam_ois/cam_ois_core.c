@@ -30,6 +30,25 @@
 #include <linux/slab.h>
 
 extern int ois_reset_register(struct ois_sensor_interface *ois);
+#if defined(CONFIG_SEC_A82XQ_PROJECT)
+static struct cam_sensor_power_setting default_power_setting[] =
+{
+	//seq_type,		seq_val,	config_val,	delay,
+	{SENSOR_VAF,            CAM_VAF,        1,      	0,      {}},
+	{SENSOR_CUSTOM_GPIO2,	CAM_VREG_MAX,	1,		    1,	    {}},
+	{SENSOR_RESET,		    CAM_VREG_MAX,	1,		    14,	    {}},
+	{SENSOR_CUSTOM_GPIO1,	CAM_VREG_MAX,	0,		    1,	    {}},
+};
+
+static struct cam_sensor_power_setting default_power_down_setting[] =
+{
+	//seq_type,		seq_val,	config_val,	delay,
+	{SENSOR_CUSTOM_GPIO1,	CAM_VREG_MAX,	0,		    0,	    {}},
+	{SENSOR_RESET,		    CAM_VREG_MAX,	0,		    0,	    {}},
+	{SENSOR_CUSTOM_GPIO2,	CAM_VREG_MAX,	0,		    0,	    {}},
+	{SENSOR_VAF,            CAM_VAF,        0,      	0,      {}},
+};
+#endif
 #endif
 
 int32_t cam_ois_construct_default_power_setting(
@@ -65,6 +84,13 @@ int32_t cam_ois_construct_default_power_setting(
 	power_info->power_down_setting[0].config_val = 0;
 
 #if defined(CONFIG_SAMSUNG_OIS_MCU_STM32)
+#if defined(CONFIG_SEC_A82XQ_PROJECT)
+    memcpy(power_info->power_setting, default_power_setting, sizeof(default_power_setting));
+    power_info->power_setting_size = ARRAY_SIZE(default_power_setting);
+
+    memcpy(power_info->power_down_setting, default_power_down_setting, sizeof(default_power_down_setting));
+    power_info->power_down_setting_size = ARRAY_SIZE(default_power_down_setting);
+#else
 	power_info->power_setting_size = 5;
 
 	power_info->power_setting[0].seq_type = SENSOR_VDIG;
@@ -109,6 +135,7 @@ int32_t cam_ois_construct_default_power_setting(
 	power_info->power_down_setting[4].seq_type = SENSOR_VDIG;
 	power_info->power_down_setting[4].seq_val = CAM_VDIG;
 	power_info->power_down_setting[4].config_val = 0;
+#endif
 #endif
 
 #if defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
@@ -915,11 +942,11 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		rc = cam_sensor_i2c_command_parser(&o_ctrl->io_master_info,
 			i2c_reg_settings,
 			cmd_desc, 1);
-#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
-		mutex_unlock(&(o_ctrl->i2c_mode_data_mutex));
-#endif
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS, "OIS pkt parsing failed: %d", rc);
+#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_OIS_RUMBA_S4)
+			mutex_unlock(&(o_ctrl->i2c_mode_data_mutex));
+#endif
 			return rc;
 		}
 
@@ -936,6 +963,8 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		rc = cam_ois_thread_add_msg(o_ctrl, msg);
 		if (rc < 0)
 			CAM_ERR(CAM_OIS, "Failed add msg to OIS thread");
+
+		mutex_unlock(&(o_ctrl->i2c_mode_data_mutex));
 #else
 		rc = cam_ois_apply_settings(o_ctrl, i2c_reg_settings);
 		if (rc < 0) {
@@ -1145,6 +1174,15 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		CAM_DBG(CAM_OIS, "SERVO OFF: Command");
 		if (rc < 0)
 			CAM_ERR(CAM_OIS, "SERVO OFF: I2C write fail");
+#endif
+#if defined(CONFIG_SEC_A82XQ_PROJECT)
+		CAM_INFO(CAM_OIS, "o_ctrl->start_cnt = %d",o_ctrl->start_cnt);
+		if (o_ctrl->start_cnt == 0) {
+			rc = cam_ois_i2c_write(o_ctrl, 0x0000, 0x00,CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_BYTE); //servo off
+			CAM_DBG(CAM_OIS, "SERVO OFF: Command");
+			if (rc < 0)
+				CAM_ERR(CAM_OIS, "SERVO OFF: I2C write fail");
+		}
 #endif
 		o_ctrl->ois_mode = 0;
 #if defined(CONFIG_SAMSUNG_APERTURE_MULTI_MODE)

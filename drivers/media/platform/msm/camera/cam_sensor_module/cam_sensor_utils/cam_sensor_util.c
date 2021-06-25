@@ -1707,7 +1707,7 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 		case SENSOR_CUSTOM_REG5:
 		case SENSOR_CUSTOM_REG6:
 #if !defined(CONFIG_SEC_R3Q_PROJECT) && !defined(CONFIG_SEC_GTS5L_PROJECT) && !defined(CONFIG_SEC_GTS5LWIFI_PROJECT) && \
-	!defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6LWIFI_PROJECT)&& !defined(CONFIG_SEC_GTS6X_PROJECT)
+	!defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6LWIFI_PROJECT)&& !defined(CONFIG_SEC_GTS6X_PROJECT) && !defined(CONFIG_SEC_A82XQ_PROJECT)
 			if (power_setting->seq_val == INVALID_VREG)
 				break;
 
@@ -2006,7 +2006,7 @@ int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 		case SENSOR_CUSTOM_REG5:
 		case SENSOR_CUSTOM_REG6:
 #if !defined(CONFIG_SEC_R3Q_PROJECT) && !defined(CONFIG_SEC_GTS5L_PROJECT) && !defined(CONFIG_SEC_GTS5LWIFI_PROJECT) && \
-	!defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6LWIFI_PROJECT) && !defined(CONFIG_SEC_GTS6X_PROJECT)
+	!defined(CONFIG_SEC_GTS6L_PROJECT) && !defined(CONFIG_SEC_GTS6LWIFI_PROJECT) && !defined(CONFIG_SEC_GTS6X_PROJECT) && !defined(CONFIG_SEC_A82XQ_PROJECT)
 			if (pd->seq_val == INVALID_VREG)
 				break;
 #endif

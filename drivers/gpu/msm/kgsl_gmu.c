@@ -1,4 +1,4 @@
-/* Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -963,6 +963,8 @@ static int gmu_rpmh_init(struct kgsl_device *device,
 
 static void send_nmi_to_gmu(struct adreno_device *adreno_dev)
 {
+	u32 val;
+
 	/* Mask so there's no interrupt caused by NMI */
 	adreno_write_gmureg(adreno_dev,
 			ADRENO_REG_GMU_GMU2HOST_INTR_MASK, 0xFFFFFFFF);
@@ -971,9 +973,10 @@ static void send_nmi_to_gmu(struct adreno_device *adreno_dev)
 	wmb();
 	adreno_write_gmureg(adreno_dev,
 		ADRENO_REG_GMU_NMI_CONTROL_STATUS, 0);
-	adreno_write_gmureg(adreno_dev,
-		ADRENO_REG_GMU_CM3_CFG,
-		(1 << GMU_CM3_CFG_NONMASKINTR_SHIFT));
+
+	adreno_read_gmureg(adreno_dev, ADRENO_REG_GMU_CM3_CFG, &val);
+	val |= 1 << GMU_CM3_CFG_NONMASKINTR_SHIFT;
+	adreno_write_gmureg(adreno_dev, ADRENO_REG_GMU_CM3_CFG, val);
 
 	/* Make sure the NMI is invoked before we proceed*/
 	wmb();
@@ -1460,9 +1463,8 @@ static int gmu_probe(struct kgsl_device *device, struct device_node *node)
 				"ACD probe failed: missing or invalid table\n");
 	}
 
-	/* disable LM if the feature is not enabled */
-	if (!ADRENO_FEATURE(adreno_dev, ADRENO_LM))
-		clear_bit(ADRENO_LM_CTRL, &adreno_dev->pwrctrl_flag);
+	if (ADRENO_FEATURE(adreno_dev, ADRENO_LM))
+		set_bit(ADRENO_LM_CTRL, &adreno_dev->pwrctrl_flag);
 
 	set_bit(GMU_ENABLED, &device->gmu_core.flags);
 	device->gmu_core.dev_ops = &adreno_a6xx_gmudev;
@@ -1538,8 +1540,9 @@ static int gmu_enable_gdsc(struct gmu_device *gmu)
 }
 
 #define CX_GDSC_TIMEOUT	5000	/* ms */
-static int gmu_disable_gdsc(struct gmu_device *gmu)
+static int gmu_disable_gdsc(struct kgsl_device *device)
 {
+	struct gmu_device *gmu = KGSL_GMU_DEVICE(device);
 	int ret;
 	unsigned long t;
 
@@ -1561,13 +1564,13 @@ static int gmu_disable_gdsc(struct gmu_device *gmu)
 	 */
 	t = jiffies + msecs_to_jiffies(CX_GDSC_TIMEOUT);
 	do {
-		if (!regulator_is_enabled(gmu->cx_gdsc))
+		if (!gmu_core_dev_cx_is_on(device))
 			return 0;
 		usleep_range(10, 100);
 
 	} while (!(time_after(jiffies, t)));
 
-	if (!regulator_is_enabled(gmu->cx_gdsc))
+	if (!gmu_core_dev_cx_is_on(device))
 		return 0;
 
 	dev_err(&gmu->pdev->dev, "GMU CX gdsc off timeout");
@@ -1595,7 +1598,7 @@ static int gmu_suspend(struct kgsl_device *device)
 	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_CX_GDSC))
 		regulator_set_mode(gmu->cx_gdsc, REGULATOR_MODE_IDLE);
 
-	gmu_disable_gdsc(gmu);
+	gmu_disable_gdsc(device);
 
 	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_CX_GDSC))
 		regulator_set_mode(gmu->cx_gdsc, REGULATOR_MODE_NORMAL);
@@ -1687,43 +1690,26 @@ static int gmu_start(struct kgsl_device *device)
 		break;
 
 	case KGSL_STATE_RESET:
-		if (test_bit(ADRENO_DEVICE_HARD_RESET, &adreno_dev->priv) ||
-			test_bit(GMU_FAULT, &device->gmu_core.flags)) {
-			gmu_suspend(device);
+		gmu_suspend(device);
 
-			gmu_aop_send_acd_state(device);
+		gmu_aop_send_acd_state(device);
 
-			gmu_enable_gdsc(gmu);
-			gmu_enable_clks(device);
-			gmu_dev_ops->irq_enable(device);
+		gmu_enable_gdsc(gmu);
+		gmu_enable_clks(device);
+		gmu_dev_ops->irq_enable(device);
 
-			ret = gmu_dev_ops->rpmh_gpu_pwrctrl(
+		ret = gmu_dev_ops->rpmh_gpu_pwrctrl(
 				adreno_dev, GMU_FW_START, GMU_COLD_BOOT, 0);
-			if (ret)
-				goto error_gmu;
+		if (ret)
+			goto error_gmu;
 
 
-			ret = hfi_start(device, gmu, GMU_COLD_BOOT);
-			if (ret)
-				goto error_gmu;
+		ret = hfi_start(device, gmu, GMU_COLD_BOOT);
+		if (ret)
+			goto error_gmu;
 
-			/* Send DCVS level prior to reset*/
-			kgsl_pwrctrl_set_default_gpu_pwrlevel(device);
-		} else {
-			/* GMU fast boot */
-			hfi_stop(gmu);
-
-			gmu_aop_send_acd_state(device);
-
-			ret = gmu_dev_ops->rpmh_gpu_pwrctrl(adreno_dev,
-					GMU_FW_START, GMU_COLD_BOOT, 0);
-			if (ret)
-				goto error_gmu;
-
-			ret = hfi_start(device, gmu, GMU_COLD_BOOT);
-			if (ret)
-				goto error_gmu;
-		}
+		/* Send DCVS level prior to reset*/
+		kgsl_pwrctrl_set_default_gpu_pwrlevel(device);
 		break;
 	default:
 		break;
@@ -1769,7 +1755,7 @@ static void gmu_stop(struct kgsl_device *device)
 
 	gmu_dev_ops->rpmh_gpu_pwrctrl(adreno_dev, GMU_FW_STOP, 0, 0);
 	gmu_disable_clks(device);
-	gmu_disable_gdsc(gmu);
+	gmu_disable_gdsc(device);
 
 	msm_bus_scale_client_update_request(gmu->pcl, 0);
 	return;
@@ -1879,7 +1865,7 @@ static bool gmu_is_initialized(struct kgsl_device *device)
 	ret = gmu_dev_ops->is_initialized(adreno_dev);
 
 	gmu_disable_clks(device);
-	gmu_disable_gdsc(gmu);
+	gmu_disable_gdsc(device);
 
 	return ret;
 }
